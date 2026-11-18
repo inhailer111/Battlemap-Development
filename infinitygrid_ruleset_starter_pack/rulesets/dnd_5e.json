@@ -1,0 +1,198 @@
+{
+  "system_name": "D&D 5e (SRD)",
+  "version": "5.1",
+  "mechanics": {
+    "movement_unit": "feet",
+    "diagonal_rule": "5e",
+    "dice_engine": "1d20"
+  },
+  "time_clock": {
+    "block_duration_hours": 1,
+    "label": "Short Rest / Exploration Hour"
+  },
+  "inventory": {
+    "grid_type": "standard_list",
+    "enforce_capacity": false
+  },
+  "character_options": {
+    "classes": [
+      {
+        "name": "Barbarian",
+        "hit_die": "d12",
+        "starting_gear": [
+          "Greataxe",
+          "Two Handaxes",
+          "Explorer's Pack"
+        ]
+      },
+      {
+        "name": "Bard",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Rapier",
+          "Lute",
+          "Leather Armor"
+        ]
+      },
+      {
+        "name": "Cleric",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Mace",
+          "Scale Mail",
+          "Shield",
+          "Holy Symbol"
+        ]
+      },
+      {
+        "name": "Druid",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Wooden Shield",
+          "Scimitar",
+          "Leather Armor"
+        ]
+      },
+      {
+        "name": "Fighter",
+        "hit_die": "d10",
+        "starting_gear": [
+          "Chain Mail",
+          "Longsword",
+          "Shield"
+        ]
+      },
+      {
+        "name": "Monk",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Shortsword",
+          "10 Darts",
+          "Explorer's Pack"
+        ]
+      },
+      {
+        "name": "Paladin",
+        "hit_die": "d10",
+        "starting_gear": [
+          "Longsword",
+          "Shield",
+          "Chain Mail"
+        ]
+      },
+      {
+        "name": "Ranger",
+        "hit_die": "d10",
+        "starting_gear": [
+          "Scale Mail",
+          "Two Shortswords",
+          "Longbow"
+        ]
+      },
+      {
+        "name": "Rogue",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Rapier",
+          "Shortbow",
+          "Leather Armor",
+          "Thieves' Tools"
+        ]
+      },
+      {
+        "name": "Sorcerer",
+        "hit_die": "d6",
+        "starting_gear": [
+          "Light Crossbow",
+          "Arcane Focus",
+          "Two Daggers"
+        ]
+      },
+      {
+        "name": "Warlock",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Light Crossbow",
+          "Arcane Focus",
+          "Leather Armor"
+        ]
+      },
+      {
+        "name": "Wizard",
+        "hit_die": "d6",
+        "starting_gear": [
+          "Quarterstaff",
+          "Spellbook",
+          "Component Pouch"
+        ]
+      }
+    ],
+    "backgrounds": [
+      {
+        "name": "Acolyte",
+        "skill_proficiencies": [
+          "Insight",
+          "Religion"
+        ]
+      },
+      {
+        "name": "Criminal",
+        "skill_proficiencies": [
+          "Deception",
+          "Stealth"
+        ]
+      },
+      {
+        "name": "Folk Hero",
+        "skill_proficiencies": [
+          "Animal Handling",
+          "Survival"
+        ]
+      },
+      {
+        "name": "Noble",
+        "skill_proficiencies": [
+          "History",
+          "Persuasion"
+        ]
+      },
+      {
+        "name": "Outlander",
+        "skill_proficiencies": [
+          "Athletics",
+          "Survival"
+        ]
+      },
+      {
+        "name": "Sage",
+        "skill_proficiencies": [
+          "Arcana",
+          "History"
+        ]
+      },
+      {
+        "name": "Soldier",
+        "skill_proficiencies": [
+          "Athletics",
+          "Intimidation"
+        ]
+      }
+    ]
+  },
+  "default_categories": [
+    {
+      "name": "Adventurer",
+      "color": "#2563eb",
+      "size": 1,
+      "player": true,
+      "numbered": false
+    },
+    {
+      "name": "Monster",
+      "color": "#b91c1c",
+      "size": 1,
+      "player": false,
+      "numbered": true
+    }
+  ]
+}

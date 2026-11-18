@@ -1,0 +1,57 @@
+{
+  "system_name": "Generic Wargame / Freeform",
+  "version": "1.0",
+  "mechanics": {
+    "movement_unit": "inches",
+    "diagonal_rule": "euclidean",
+    "dice_engine": "d6_pool"
+  },
+  "time_clock": {
+    "block_duration_hours": 1,
+    "label": "Game Turn"
+  },
+  "inventory": {
+    "grid_type": "none",
+    "enforce_capacity": false
+  },
+  "character_options": {
+    "unit_types": [
+      {
+        "name": "Infantry Squad",
+        "base_size": "32mm",
+        "role": "Troops"
+      },
+      {
+        "name": "Elite Character",
+        "base_size": "40mm",
+        "role": "HQ / Leader"
+      },
+      {
+        "name": "Light Vehicle",
+        "base_size": "Hull",
+        "role": "Fast Attack"
+      },
+      {
+        "name": "Heavy Armor / Walker",
+        "base_size": "Hull",
+        "role": "Heavy Support"
+      }
+    ]
+  },
+  "default_categories": [
+    {
+      "name": "Player 1 Unit",
+      "color": "#1d4ed8",
+      "size": 1,
+      "player": true,
+      "numbered": true
+    },
+    {
+      "name": "Player 2 Unit",
+      "color": "#dc2626",
+      "size": 1,
+      "player": false,
+      "numbered": true
+    }
+  ]
+}
