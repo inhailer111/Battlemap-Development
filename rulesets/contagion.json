@@ -1,0 +1,109 @@
+{
+  "system_name": "Contagion",
+  "version": "1.0",
+  "mechanics": {
+    "movement_unit": "feet",
+    "diagonal_rule": "5e",
+    "dice_engine": "1d20"
+  },
+  "character_options": {
+    "jobs": [
+      {
+        "name": "Data Specialist",
+        "starting_gear": [
+          "Laptop",
+          "Multi-tool"
+        ],
+        "bonus": "+2 Electronics/Security, expert terminal access and network bypass."
+      },
+      {
+        "name": "Paramedic",
+        "starting_gear": [
+          "Trauma Kit (2x1)",
+          "Bandages (1x1)"
+        ],
+        "bonus": "+2 Medical, superior treatment efficiency for trauma and infection management."
+      },
+      {
+        "name": "Firefighter",
+        "starting_gear": [
+          "Fire Axe (3x1)",
+          "Gas Mask (2x2)"
+        ],
+        "bonus": "+2 Strength/Breaching, handles heavy doors, axes, and environmental hazards."
+      },
+      {
+        "name": "Police Officer",
+        "starting_gear": [
+          "9mm Pistol (2x1)",
+          "Ammo Box (1x1)"
+        ],
+        "bonus": "+2 Firearms proficiency and tactical control during engagements."
+      },
+      {
+        "name": "Military Veteran",
+        "starting_gear": [
+          "Assault Rifle",
+          "Combat Knife"
+        ],
+        "bonus": "Enhanced combat readiness, weapon handling, and endurance under fire."
+      },
+      {
+        "name": "Security Guard",
+        "starting_gear": [
+          "Flashlight",
+          "Radio"
+        ],
+        "bonus": "Access control expertise, vigilant watch bonuses, and protective gear familiarity."
+      },
+      {
+        "name": "Janitor",
+        "starting_gear": [
+          "Keys",
+          "Cleaning Supplies"
+        ],
+        "bonus": "Unconventional shortcut navigation through maintenance tunnels and waste systems."
+      },
+      {
+        "name": "Construction Worker",
+        "starting_gear": [
+          "Heavy Hammer",
+          "Toolkit"
+        ],
+        "bonus": "Heavy lifting capacity and structural reinforcement proficiency."
+      },
+      {
+        "name": "Auto Mechanic",
+        "starting_gear": [
+          "Crowbar (2x1)",
+          "Duct Tape (1x1)"
+        ],
+        "bonus": "+2 Repair/Crafting, excellent for fixing vehicles, engines, and improvised tools."
+      },
+      {
+        "name": "Sorting / Logistics",
+        "starting_gear": [
+          "Clipboard",
+          "Vest"
+        ],
+        "bonus": "Inventory management and spatial efficiency optimizations for carrying gear."
+      },
+      {
+        "name": "Warehouse Dispatch",
+        "starting_gear": [
+          "Radio",
+          "Flashlight"
+        ],
+        "bonus": "Supply chain insight and efficient scavenging yields in industrial zones."
+      },
+      {
+        "name": "Park Ranger / Hunter",
+        "starting_gear": [
+          "Hunting Rifle (7x1)",
+          "Knife (2x1)"
+        ],
+        "bonus": "+2 Survival/Tracking, wilderness navigation, and proficiency with hunting gear and bows."
+      }
+    ]
+  }
+}

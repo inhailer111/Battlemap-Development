@@ -1,0 +1,141 @@
+{
+  "system_name": "D&D 5e (SRD)",
+  "version": "5.1",
+  "mechanics": {
+    "movement_unit": "feet",
+    "diagonal_rule": "5e",
+    "dice_engine": "1d20"
+  },
+  "character_options": {
+    "classes": [
+      {
+        "name": "Barbarian",
+        "hit_die": "d12",
+        "starting_gear": [
+          "Greataxe",
+          "Handaxes"
+        ]
+      },
+      {
+        "name": "Bard",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Rapier",
+          "Lute"
+        ]
+      },
+      {
+        "name": "Cleric",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Mace",
+          "Scale Mail",
+          "Shield"
+        ]
+      },
+      {
+        "name": "Fighter",
+        "hit_die": "d10",
+        "starting_gear": [
+          "Chain Mail",
+          "Longsword",
+          "Shield"
+        ]
+      },
+      {
+        "name": "Monk",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Shortsword",
+          "Darts"
+        ]
+      },
+      {
+        "name": "Paladin",
+        "hit_die": "d10",
+        "starting_gear": [
+          "Longsword",
+          "Shield",
+          "Chain Mail"
+        ]
+      },
+      {
+        "name": "Ranger",
+        "hit_die": "d10",
+        "starting_gear": [
+          "Scale Mail",
+          "Shortswords",
+          "Longbow"
+        ]
+      },
+      {
+        "name": "Rogue",
+        "hit_die": "d8",
+        "starting_gear": [
+          "Rapier",
+          "Shortbow",
+          "Thieves' Tools"
+        ]
+      },
+      {
+        "name": "Wizard",
+        "hit_die": "d6",
+        "starting_gear": [
+          "Quarterstaff",
+          "Spellbook"
+        ]
+      }
+    ],
+    "backgrounds": [
+      {
+        "name": "Acolyte",
+        "skill_proficiencies": [
+          "Insight",
+          "Religion"
+        ]
+      },
+      {
+        "name": "Criminal",
+        "skill_proficiencies": [
+          "Deception",
+          "Stealth"
+        ]
+      },
+      {
+        "name": "Folk Hero",
+        "skill_proficiencies": [
+          "Animal Handling",
+          "Survival"
+        ]
+      },
+      {
+        "name": "Noble",
+        "skill_proficiencies": [
+          "History",
+          "Persuasion"
+        ]
+      },
+      {
+        "name": "Outlander",
+        "skill_proficiencies": [
+          "Athletics",
+          "Survival"
+        ]
+      },
+      {
+        "name": "Sage",
+        "skill_proficiencies": [
+          "Arcana",
+          "History"
+        ]
+      },
+      {
+        "name": "Soldier",
+        "skill_proficiencies": [
+          "Athletics",
+          "Intimidation"
+        ]
+      }
+    ]
+  }
+}

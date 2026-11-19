@@ -1,0 +1,33 @@
+{
+  "system_name": "Generic Wargame / Freeform",
+  "version": "1.0",
+  "mechanics": {
+    "movement_unit": "inches",
+    "diagonal_rule": "euclidean",
+    "dice_engine": "d6_pool"
+  },
+  "character_options": {
+    "unit_types": [
+      {
+        "name": "Infantry Squad",
+        "base_size": "32mm",
+        "role": "Troops"
+      },
+      {
+        "name": "Elite Character",
+        "base_size": "40mm",
+        "role": "HQ / Leader"
+      },
+      {
+        "name": "Light Vehicle",
+        "base_size": "Hull",
+        "role": "Fast Attack"
+      },
+      {
+        "name": "Heavy Armor / Walker",
+        "base_size": "Hull",
+        "role": "Heavy Support"
+      }
+    ]
+  }
+}
