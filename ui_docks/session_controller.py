@@ -1,6 +1,12 @@
 import math
+<<<<<<< HEAD
 from PySide6.QtCore import Qt, QRectF, QLineF, QTimer
 from PySide6.QtGui import QGuiApplication, QPainter
+=======
+import random
+from PySide6.QtCore import Qt, QPointF, QRectF, QLineF, QTimer
+from PySide6.QtGui import QGuiApplication
+>>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 from core.config import (
     UNITS_PER_FT, CELL, LEVELS, JUMP_PX, Zoom, Tokens,
@@ -45,6 +51,7 @@ class SessionControllerMixin:
     def check_building_interiors(self):
         player_toks = [it for it in self.scene.items() if isinstance(it, TokenItem) and it.player]
         buildings = [it for it in self.scene.items() if isinstance(it, BuildingItem)]
+<<<<<<< HEAD
         windows = [it for it in self.scene.items() if isinstance(it, DoorWallItem) and it.is_window]
         for b in buildings:
             brect = QRectF(b.pos().x(), b.pos().y(), b.w, b.h)
@@ -59,18 +66,58 @@ class SessionControllerMixin:
                     ):
                         inside = True
                         break
+=======
+        for b in buildings:
+            brect = QRectF(b.pos().x(), b.pos().y(), b.w, b.h)
+            inside = any(brect.contains(t.center()) for t in player_toks)
+>>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
             if inside != b.has_player_inside:
                 b.has_player_inside = inside
                 b.update()
             if inside and not b.interior_done:
                 self.populate_building_interior(b, force=False)
 
+<<<<<<< HEAD
+=======
+    def _fallback_interior_specs(self, b, seed, genre):
+        bx_ft = b.pos().x() / UNITS_PER_FT
+        by_ft = b.pos().y() / UNITS_PER_FT
+        bw_ft = b.w / UNITS_PER_FT
+        bh_ft = b.h / UNITS_PER_FT
+        rng = random.Random(f"{seed}:{b.kind}:{round(bx_ft, 1)}:{round(by_ft, 1)}")
+        specs = []
+        pad = 6.0
+        cx = bx_ft + bw_ft / 2.0
+        cy = by_ft + bh_ft / 2.0
+
+        kind_props = {
+            "House": ["table", "bed", "chest"],
+            "Shop": ["counter", "shelf", "crate"],
+            "Inn": ["table", "hearth", "bed"],
+            "Barn": ["crate", "wagon", "boulder"],
+            "Warehouse": ["crate", "crate", "terminal"],
+        }
+        pool = kind_props.get(b.kind, ["table", "crate"])
+        if genre == "apocalypse" and b.kind in ("Shop", "Warehouse"):
+            pool = ["crate", "barricade", "terminal"]
+
+        for idx, pkind in enumerate(pool):
+            ox = cx + rng.uniform(-max(2.0, bw_ft * 0.25), max(2.0, bw_ft * 0.25))
+            oy = cy + rng.uniform(-max(2.0, bh_ft * 0.25), max(2.0, bh_ft * 0.25))
+            ox = max(bx_ft + pad, min(bx_ft + max(pad, bw_ft - pad), ox))
+            oy = max(by_ft + pad, min(by_ft + max(pad, bh_ft - pad), oy))
+            rot = rng.choice([0, 90, 180, 270])
+            specs.append({"t": "prop", "kind": pkind, "x": ox, "y": oy, "rot": rot})
+        return specs
+
+>>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
     def populate_building_interior(self, b, force=False):
         if b.interior_done and not force:
             return
         b.interior_done = True
         b.has_player_inside = True
         b.update()
+<<<<<<< HEAD
         if worldgen is None:
             return
         seed = Atlas.current.seed if Atlas.current is not None else 42
@@ -85,6 +132,38 @@ class SessionControllerMixin:
             genre=genre,
         )
         self.instantiate(specs, {})
+=======
+
+        seed = Atlas.current.seed if Atlas.current is not None else 42
+        genre = Atlas.current.genre if Atlas.current is not None else "apocalypse"
+        specs = []
+
+        if worldgen is not None and hasattr(worldgen, "generate_building_interior"):
+            try:
+                res = worldgen.generate_building_interior(
+                    b.pos().x() / UNITS_PER_FT,
+                    b.pos().y() / UNITS_PER_FT,
+                    b.w / UNITS_PER_FT,
+                    b.h / UNITS_PER_FT,
+                    b.kind,
+                    seed=seed,
+                    genre=genre,
+                )
+                if res:
+                    specs = list(res)
+            except Exception as ex:
+                self.statusBar().showMessage(f"Interior generator note ({ex}); using built-in layout.")
+
+        if not specs:
+            specs = self._fallback_interior_specs(b, seed, genre)
+
+        before_items = set(self.scene.items())
+        self.instantiate(specs, {})
+        for it in self.scene.items():
+            if it not in before_items and it.zValue() <= b.zValue():
+                it.setZValue(b.zValue() + 2)
+
+>>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
         self.statusBar().showMessage(f"Generated interior for {b.label or b.kind}.")
 
     def run_vision(self):

@@ -490,6 +490,19 @@ class BuildingItem(Snappy, QGraphicsItem):
         base = QColor(BUILDING_KINDS.get(self.kind, "#888888"))
         p.setPen(Qt.NoPen)
         draw_interior = self.has_player_inside and not (on_tv and hidden_in_fog(self))
+<<<<<<< HEAD
+=======
+        vis = _vision()
+        local_vis = QPainterPath()
+        if vis.fog_on and not vis.visible.isEmpty():
+            local_vis = vis.visible.translated(-self.pos())
+        peering_in = (
+            (not self.has_player_inside)
+            and (not local_vis.isEmpty())
+            and local_vis.intersects(QRectF(2, 2, max(1.0, w - 4), max(1.0, h - 4)))
+        )
+        draw_interior = (self.has_player_inside or peering_in) and not (on_tv and hidden_in_fog(self))
+>>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
         if draw_interior:
             floor_col = QColor("#3b2f26") if self.kind in ("House", "Inn", "Shop", "Barn") else QColor("#374151")
             p.fillRect(QRectF(0, 0, w, h), floor_col)
@@ -501,7 +514,16 @@ class BuildingItem(Snappy, QGraphicsItem):
             while y_p < h:
                 p.drawLine(QLineF(0, y_p, w, y_p))
                 y_p += step_p
+<<<<<<< HEAD
         else:
+=======
+        if not self.has_player_inside:
+            p.save()
+            if peering_in:
+                roof_clip = QPainterPath()
+                roof_clip.addRect(QRectF(0, 0, w, h))
+                p.setClipPath(roof_clip.subtracted(local_vis))
+>>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
             if w >= h:
                 p.fillRect(QRectF(0, 0, w, h / 2), base.lighter(115))
                 p.fillRect(QRectF(0, h / 2, w, h / 2), base.darker(115))
@@ -514,6 +536,10 @@ class BuildingItem(Snappy, QGraphicsItem):
             ridge_pen.setCosmetic(True)
             p.setPen(ridge_pen)
             p.drawLine(ridge)
+<<<<<<< HEAD
+=======
+            p.restore()
+>>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
         p.setBrush(Qt.NoBrush)
         wall = QPen(QColor("#f59e0b") if self.isSelected() and not on_tv else QColor("#2b2b2b"), 3)
         wall.setCosmetic(True)
