@@ -46,10 +46,6 @@ def reset_explored(polys=()):
         Vision.explored_polys.append(pts)
         Vision.explored = Vision.explored.united(poly_path(pts))
 
-
-<<<<<<< HEAD
-def wall_segments(item):
-=======
 def _carve_openings_from_edge(x1, y1, x2, y2, openings, tol=15.0):
     """Subtract open doors and windows from a building perimeter edge so rays pass through them."""
     dx, dy = x2 - x1, y2 - y1
@@ -92,14 +88,11 @@ def _carve_openings_from_edge(x1, y1, x2, y2, openings, tol=15.0):
 
 
 def wall_segments(item, openings=()):
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
     if isinstance(item, BuildingItem):
         if item.has_player_inside:
             return None
         x, y = item.pos().x(), item.pos().y()
-<<<<<<< HEAD
         pts = [(x, y), (x + item.w, y), (x + item.w, y + item.h), (x, y + item.h), (x, y)]
-=======
         edges = [
             (x, y, x + item.w, y),
             (x + item.w, y, x + item.w, y + item.h),
@@ -110,7 +103,6 @@ def wall_segments(item, openings=()):
         for ex1, ey1, ex2, ey2 in edges:
             out.extend(_carve_openings_from_edge(ex1, ey1, ex2, ey2, openings))
         return out
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
     elif isinstance(item, FenceItem) and item.style != "Wood":
         pts = [(p.x() + item.pos().x(), p.y() + item.pos().y()) for p in item.pts]
     elif isinstance(item, DoorWallItem) and item.blocks_vision():
@@ -168,16 +160,12 @@ def owner_shape(owner):
 def hidden_in_fog(item):
     if not Vision.fog_on:
         return False
-<<<<<<< HEAD
     if isinstance(item, BuildingItem) or (isinstance(item, FenceItem) and item.style != "Wood"):
-=======
-    if isinstance(item, BuildingItem):
         # Only reveal the whole building if rays hit it or a player token is inside it
         if getattr(item, "has_player_inside", False):
             return False
         return id(item) not in Vision.shown_ids
     if isinstance(item, FenceItem) and item.style != "Wood":
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
         return id(item) not in Vision.shown_ids
     if isinstance(item, (PropItem, DoorWallItem)):
         scene = item.scene()
@@ -186,15 +174,12 @@ def hidden_in_fog(item):
             for b in scene.items():
                 if isinstance(b, BuildingItem):
                     if QRectF(b.pos().x(), b.pos().y(), b.w, b.h).contains(ipos):
-<<<<<<< HEAD
                         if not b.has_player_inside:
                             return True
-=======
                         # Inside a building: only reveal what the raycast actually sees (or if a player token is inside)
                         if getattr(b, "has_player_inside", False):
                             return False
                         return not Vision.visible.intersects(item.sceneBoundingRect())
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
         return not Vision.show.intersects(item.sceneBoundingRect())
     if isinstance(item, (StrokeItem, FenceItem)):
         return not Vision.show.intersects(item.sceneBoundingRect())
@@ -221,11 +206,8 @@ def record_explored(tok, c, R, pts, hits):
 
 
 def update_vision(scene):
-<<<<<<< HEAD
     tokens, reveals, walls = [], [], []
-=======
     tokens, reveals, walls, openings, wall_items = [], [], [], [], []
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
     for it in scene.items():
         if isinstance(it, TokenItem):
             if it.player:
@@ -233,11 +215,9 @@ def update_vision(scene):
         elif isinstance(it, RevealItem):
             reveals.append(it)
         else:
-<<<<<<< HEAD
             segs = wall_segments(it)
             if segs:
                 walls.append((segs, it))
-=======
             if isinstance(it, DoorWallItem) and not it.blocks_vision():
                 pts = [(p.x() + it.pos().x(), p.y() + it.pos().y()) for p in it.pts]
                 for i in range(len(pts) - 1):
@@ -247,7 +227,6 @@ def update_vision(scene):
         segs = wall_segments(it, openings)
         if segs:
             walls.append((segs, it))
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
     Vision.players = len(tokens)
     visible, show = QPainterPath(), QPainterPath()
     shown = set()

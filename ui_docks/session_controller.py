@@ -1,12 +1,9 @@
 import math
-<<<<<<< HEAD
 from PySide6.QtCore import Qt, QRectF, QLineF, QTimer
 from PySide6.QtGui import QGuiApplication, QPainter
-=======
 import random
 from PySide6.QtCore import Qt, QPointF, QRectF, QLineF, QTimer
 from PySide6.QtGui import QGuiApplication
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 from core.config import (
     UNITS_PER_FT, CELL, LEVELS, JUMP_PX, Zoom, Tokens,
@@ -51,7 +48,6 @@ class SessionControllerMixin:
     def check_building_interiors(self):
         player_toks = [it for it in self.scene.items() if isinstance(it, TokenItem) and it.player]
         buildings = [it for it in self.scene.items() if isinstance(it, BuildingItem)]
-<<<<<<< HEAD
         windows = [it for it in self.scene.items() if isinstance(it, DoorWallItem) and it.is_window]
         for b in buildings:
             brect = QRectF(b.pos().x(), b.pos().y(), b.w, b.h)
@@ -66,19 +62,15 @@ class SessionControllerMixin:
                     ):
                         inside = True
                         break
-=======
         for b in buildings:
             brect = QRectF(b.pos().x(), b.pos().y(), b.w, b.h)
             inside = any(brect.contains(t.center()) for t in player_toks)
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
             if inside != b.has_player_inside:
                 b.has_player_inside = inside
                 b.update()
             if inside and not b.interior_done:
                 self.populate_building_interior(b, force=False)
 
-<<<<<<< HEAD
-=======
     def _fallback_interior_specs(self, b, seed, genre):
         bx_ft = b.pos().x() / UNITS_PER_FT
         by_ft = b.pos().y() / UNITS_PER_FT
@@ -110,14 +102,12 @@ class SessionControllerMixin:
             specs.append({"t": "prop", "kind": pkind, "x": ox, "y": oy, "rot": rot})
         return specs
 
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
     def populate_building_interior(self, b, force=False):
         if b.interior_done and not force:
             return
         b.interior_done = True
         b.has_player_inside = True
         b.update()
-<<<<<<< HEAD
         if worldgen is None:
             return
         seed = Atlas.current.seed if Atlas.current is not None else 42
@@ -132,7 +122,6 @@ class SessionControllerMixin:
             genre=genre,
         )
         self.instantiate(specs, {})
-=======
 
         seed = Atlas.current.seed if Atlas.current is not None else 42
         genre = Atlas.current.genre if Atlas.current is not None else "apocalypse"
@@ -163,7 +152,6 @@ class SessionControllerMixin:
             if it not in before_items and it.zValue() <= b.zValue():
                 it.setZValue(b.zValue() + 2)
 
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
         self.statusBar().showMessage(f"Generated interior for {b.label or b.kind}.")
 
     def run_vision(self):
@@ -480,28 +468,32 @@ class SessionControllerMixin:
             self.detail_timer.start()
 
     def run_detail(self):
-        w = Atlas.current
-        if w is None or worldgen is None:
-            return
-        rects = []
-        if Zoom.dm >= DETAIL_ZOOM:
-            rects.append(self.view_rect())
-        if self.player_win is not None and Zoom.tv >= DETAIL_ZOOM:
-            pv = self.player_win.view
-            rects.append(pv.mapToScene(pv.viewport().rect()).boundingRect())
-        ch, k, todo = worldgen.CHUNK_FT, UNITS_PER_FT, []
-        for r in rects:
-            for cx in range(math.floor(r.left() / k / ch), math.floor(r.right() / k / ch) + 1):
-                for cy in range(math.floor(r.top() / k / ch), math.floor(r.bottom() / k / ch) + 1):
-                    if (cx, cy) not in w.done and (cx, cy) not in todo:
-                        todo.append((cx, cy))
-        numbers = {}
-        for key in todo[:6]:
-            self.instantiate(w.plan_chunk(*key), numbers)
-            w.done.add(key)
-        if len(todo) > 6:
-            self.detail_timer.start()
-
+            w = Atlas.current
+            if w is None or worldgen is None:
+                return
+            done = getattr(w, "done", None)
+            if done is None:
+                done = set()
+                setattr(w, "done", done)
+            rects = []
+            if Zoom.dm >= DETAIL_ZOOM:
+                rects.append(self.view_rect())
+            if self.player_win is not None and Zoom.tv >= DETAIL_ZOOM:
+                pv = self.player_win.view
+                rects.append(pv.mapToScene(pv.viewport().rect()).boundingRect())
+            ch = getattr(worldgen, "CHUNK_FT", 250)
+            k, todo = UNITS_PER_FT, []
+            for r in rects:
+                for cx in range(math.floor(r.left() / k / ch), math.floor(r.right() / k / ch) + 1):
+                    for cy in range(math.floor(r.top() / k / ch), math.floor(r.bottom() / k / ch) + 1):
+                        if (cx, cy) not in done and (cx, cy) not in todo:
+                            todo.append((cx, cy))
+            numbers = {}
+            for key in todo[:6]:
+                self.instantiate(w.plan_chunk(*key), numbers)
+                done.add(key)
+            if len(todo) > 6:
+                self.detail_timer.start()
     def instantiate(self, specs, numbers):
         k = UNITS_PER_FT
         for sp in specs:

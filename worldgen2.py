@@ -1,1003 +1,810 @@
-"""Procedural world, dungeon & building interior generator for InfinityGrid Tabletop (pure Python, no Qt).
+from __future__ import annotations
 
-Coordinates are in feet: x grows east, y grows south, (0, 0) is the middle of the region.
-Everything is a pure function of the seed, so the same seed always rebuilds the same world,
-and tiles beyond the edge of the state/region are generated on demand in the exact same way.
-Supports multiple TTRPG genres ("apocalypse", "fantasy", "scifi", "western") plus procedural Dungeons
-and on-demand building interior generation.
-"""
-import heapq
 import math
 import random
+from dataclasses import dataclass, field, MISSING
+from typing import Dict, Iterable, List, Optional, Tuple
 
-MILE = 5280.0
-TILE_FT = 12 * MILE      # settlements are generated tile by tile, so the world never runs out
-CHUNK_FT = 800           # street-level detail is generated in chunks of this size
-CELL_FT = 2 * MILE       # resolution of the stored elevation grid
-ROUTE_FT = 6 * MILE      # resolution of the highway/route router
-SEA = 0.20
 
-BIOMES = ["Water", "Sand", "Grass", "Forest", "Farmland", "Scrub", "Rock", "Snow"]
-WATER, SAND, GRASS, FOREST, FARM, SCRUB, ROCK, SNOW = range(8)
-RANK = {"city": 3, "town": 2, "village": 1, "farm": 0}
-
-# prop sizes in feet (width, height)
-PROP_FT = {
-    "car": (15.0, 6.5),
-    "wreck": (15.0, 7.0),
-    "barricade": (12.0, 3.5),
-    "rubble": (12.0, 10.0),
-    "overgrowth": (20.0, 16.0),
-    "wagon": (14.0, 7.0),
-    "campfire": (6.0, 6.0),
-    "boulder": (10.0, 9.0),
-    "crate": (5.0, 5.0),
-    "terminal": (6.0, 4.0),
-    "tree": (16.0, 16.0),
-    "table": (8.0, 5.0),
-    "bed": (4.5, 7.0),
-    "chest": (4.5, 3.0),
-    "tent": (10.0, 10.0),
-    "counter": (12.0, 3.5),
-    "shelf": (8.0, 2.5),
-    "hearth": (6.0, 4.0),
-    "altar": (8.0, 4.5),
-    "pillar": (4.0, 4.0),
-    "brazier": (4.0, 4.0),
-}
-
-GENRE_DATA = {
-    "apocalypse": {
-        "name": "Modern / Zombie Apocalypse",
-        "name_a": ["Cedar", "Alder", "Spruce", "Eagle", "Salmon", "Cascade", "Harbor", "Rainier", "Olympic", "Mill",
-                   "Rock", "Fir", "Orca", "Bluff", "Summit", "Prairie", "Willow", "Sunset", "Lake", "River", "Stone",
-                   "Iron", "Cold", "Elk", "Bear", "Heron", "Wolf", "Crow", "Maple", "Pine"],
-        "name_b": ["ton", "ville", "burg", "port", "falls", "ridge", "dale", "view", "haven", "ford", "wood",
-                   "field", "bay", "creek", "springs", " Junction", " Heights", " Landing", " Crossing"],
-        "farm_names": ["Miller", "Hansen", "Olsen", "Baker", "Reyes", "Nguyen", "Carter", "Lindqvist", "Wagner", "Holt"],
-        "farm_suffix": " Farm",
-        "labels": {"Shop": ["Diner", "Pharmacy", "Hardware", "Market", "Bank", "Gas", "Clinic", "Bar", "Pawn"],
-                   "Warehouse": ["Depot", "Storage", "Freight", "Garage"], "Inn": ["Motel", "Inn", "Hotel"]},
+GENRE_DATA: Dict[str, dict] = {
+    "Contagion": {
         "road_style": "Paved",
-        "farm_road_style": "Dirt",
-        "fence_style": "Wood",
-        "vehicles": ("car", "wreck"),
-        "enemies": [("Walker", 0.70), ("Runner", 0.22), ("Brute", 0.08)],
+        "secondary_style": "Dirt",
+        "building_kinds": [
+            "house",
+            "duplex",
+            "warehouse",
+            "clinic",
+            "police",
+            "fire_station",
+            "market",
+            "barn",
+        ],
     },
-    "fantasy": {
-        "name": "High Fantasy",
-        "name_a": ["Oak", "Silver", "Gold", "Dragon", "Mist", "Shadow", "High", "Iron", "Stone", "Raven",
-                   "Storm", "White", "Red", "Green", "Bright", "Dark", "Frost", "Sun", "Moon", "Star",
-                   "Elder", "Thorn", "Briar", "Crown", "Kings", "Queens", "Oakhaven", "River", "Deep", "Val"],
-        "name_b": ["hold", "keep", "shire", "ford", "bridge", "watch", "crest", "vale", "stead", "brook",
-                   "wood", "haven", "port", "gate", "tower", "barrow", "mere", "hollow", "fell", "wick"],
-        "farm_names": ["Greenleaf", "Barleycorn", "Appleby", "Thatcher", "Bramble", "Underhill", "Proudfoot", "Miller", "Shepherd", "Oakley"],
-        "farm_suffix": " Homestead",
-        "labels": {"Shop": ["Tavern", "Blacksmith", "Apothecary", "General Store", "Alchemist", "Bakery", "Guildhall", "Tailor", "Jeweler"],
-                   "Warehouse": ["Granary", "Stables", "Armory", "Storehouse"], "Inn": ["Inn", "Tavern", "Alehouse"]},
-        "road_style": "Cobblestone",
-        "farm_road_style": "Dirt",
-        "fence_style": "Stone wall",
-        "vehicles": ("wagon", "boulder"),
-        "enemies": [("Goblin", 0.65), ("Bandit", 0.25), ("Ogre", 0.10)],
-    },
-    "scifi": {
-        "name": "Sci-Fi / Cyberpunk",
-        "name_a": ["Neo", "Cyber", "Apex", "Nova", "Titan", "Helios", "Vanguard", "Aegis", "Orion", "Valkyrie",
-                   "Zenith", "Chronos", "Hyperion", "Omega", "Delta", "Sector", "Atlas", "Nexus", "Stratos", "Echo",
-                   "Cobalt", "Chrome", "Zero", "Vector", "Pulse", "Ion", "Solaris", "Terra", "Prime", "Arc"],
-        "name_b": [" City", " Station", " Prime", " Hub", " Core", " Spire", " Port", " Outpost", " Dome", " Complex",
-                   " Terminal", " Enclave", " Colony", " Bay", " Grid", " Reach", " Gate", " Base", " Point"],
-        "farm_names": ["Hydroponics", "Bio-Dome", "Agri-Vat", "Synth-Crop", "Algae-Farm", "Kelp-Works", "Green-Vault", "Terraform"],
-        "farm_suffix": " Sector",
-        "labels": {"Shop": ["Cantina", "Cyber-Doc", "Tech-Shop", "Synth-Mart", "Credit-Exchange", "Fuel-Cell", "Med-Bay", "Club", "Black-Market"],
-                   "Warehouse": ["Hangar", "Cargo-Bay", "Reactor", "Depot"], "Inn": ["Pod-Hotel", "Hostel", "Lounge"]},
-        "road_style": "Paved",
-        "farm_road_style": "Paved",
-        "fence_style": "Stone wall",
-        "vehicles": ("car", "wreck"),
-        "enemies": [("Sec-Drone", 0.60), ("Cyborg", 0.30), ("Mech", 0.10)],
-    },
-    "western": {
-        "name": "Western / Frontier",
-        "name_a": ["Red", "Dead", "Coyote", "Cactus", "Copper", "Silver", "Gold", "Mesa", "Canyon", "Dusty",
-                   "Dry", "Rattlesnake", "Vulture", "Lone", "Tomb", "Bitter", "Wild", "Iron", "Thunder", "Sun",
-                   "Apache", "Cimarron", "Pecos", "Rio", "Dodge", "Laramie", "Abilene", "El", "Santa", "San"],
-        "name_b": [" Gulch", " Creek", " Springs", " Rock", " Ridge", " Flats", " Crossing", " Junction", " Wells",
-                   " Pass", " Butte", " Mesa", " Canyon", " Valley", " Town", " City", " Station", " Fort", " Ranch"],
-        "farm_names": ["McAllister", "Callahan", "Cassidy", "Holliday", "Earp", "Dalton", "Boone", "Crockett", "Bowie", "Travis"],
-        "farm_suffix": " Ranch",
-        "labels": {"Shop": ["Saloon", "General Store", "Gunsmith", "Assayer", "Bank", "Doctor", "Telegraph", "Barber", "Trading Post"],
-                   "Warehouse": ["Livery", "Corral", "Freight Depot", "Mill"], "Inn": ["Saloon & Rooms", "Boarding House", "Hotel"]},
+    "Fantasy": {
         "road_style": "Dirt",
-        "farm_road_style": "Dirt",
-        "fence_style": "Wood",
-        "vehicles": ("wagon", "boulder"),
-        "enemies": [("Outlaw", 0.65), ("Gunslinger", 0.25), ("Brute", 0.10)],
+        "secondary_style": "Dirt",
+        "building_kinds": ["cottage", "tavern", "smith", "granary", "hall", "shrine"],
+    },
+    "Sci-Fi": {
+        "road_style": "Paved",
+        "secondary_style": "Paved",
+        "building_kinds": ["hab", "depot", "relay", "medbay", "bunker", "hangar"],
     },
 }
 
-# the eight ways the macro layout can be turned (orthogonal matrices), used by the "varied" layout
-MATS = [(1, 0, 0, 1), (-1, 0, 0, 1), (1, 0, 0, -1), (-1, 0, 0, -1),
-        (0, 1, 1, 0), (0, -1, 1, 0), (0, 1, -1, 0), (0, -1, -1, 0)]
-NB8 = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+RANK: Dict[str, int] = {
+    "city": 4,
+    "town": 3,
+    "village": 2,
+    "farm": 1,
+}
+
+BIOMES: Tuple[str, ...] = (
+    "Water",
+    "Marsh",
+    "Grassland",
+    "Forest",
+    "Scrub",
+    "Rock",
+)
 
 
-# ----------------------------------------------------------------------------- noise helpers
-def mix(*vals):
-    h = 1469598103934665603
+def mix(*vals: int) -> int:
+    """Deterministic integer hash mixer for seeded procedural generation."""
+    h = 0x9E3779B97F4A7C15
     for v in vals:
-        h ^= int(v) & 0xFFFFFFFFFFFF
-        h = (h * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+        x = int(v) & 0xFFFFFFFFFFFFFFFF
+        x ^= x >> 30
+        x = (x * 0xBF58476D1CE4E5B9) & 0xFFFFFFFFFFFFFFFF
+        x ^= x >> 27
+        x = (x * 0x94D049BB133111EB) & 0xFFFFFFFFFFFFFFFF
+        x ^= x >> 31
+        h ^= (x + 0x9E3779B97F4A7C15 + ((h << 6) & 0xFFFFFFFFFFFFFFFF) + (h >> 2))
+        h &= 0xFFFFFFFFFFFFFFFF
     return h
 
+def chaikin(
+    pts: List[Tuple[float, float]], iterations: int = 2
+) -> List[Tuple[float, float]]:
+    """Corner-cutting polyline smoothing (Chaikin's algorithm) for road curves."""
+    if len(pts) < 3 or iterations <= 0:
+        return list(pts)
 
-def hash2(ix, iy, seed):
-    h = (ix * 374761393 + iy * 668265263 + seed * 1442695041) & 0xFFFFFFFF
-    h = ((h ^ (h >> 13)) * 1274126177) & 0xFFFFFFFF
-    return ((h ^ (h >> 16)) & 0xFFFF) / 65535.0
-
-
-def vnoise(x, y, seed):
-    ix, iy = math.floor(x), math.floor(y)
-    fx, fy = x - ix, y - iy
-    sx, sy = fx * fx * (3 - 2 * fx), fy * fy * (3 - 2 * fy)
-    a, b = hash2(ix, iy, seed), hash2(ix + 1, iy, seed)
-    c, d = hash2(ix, iy + 1, seed), hash2(ix + 1, iy + 1, seed)
-    return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy
-
-
-def fbm(x, y, seed, octaves=3):
-    total, amp, norm = 0.0, 1.0, 0.0
-    for o in range(octaves):
-        total += amp * vnoise(x, y, seed + o * 101)
-        norm += amp
-        x, y, amp = x * 2.03, y * 2.03, amp * 0.5
-    return total / norm
-
-
-def smooth(a, b, x):
-    if b == a:
-        return 1.0 if x >= a else 0.0
-    t = (x - a) / (b - a)
-    t = 0.0 if t < 0 else 1.0 if t > 1 else t
-    return t * t * (3 - 2 * t)
-
-
-def chaikin(pts, iterations=3):
+    coords = [(float(x), float(y)) for x, y in pts]
     for _ in range(iterations):
-        out = [pts[0]]
-        for a, b in zip(pts, pts[1:]):
-            out.append((0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]))
-            out.append((0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]))
-        out.append(pts[-1])
-        pts = out
-    return pts
+        if len(coords) < 3:
+            break
+        nxt: List[Tuple[float, float]] = [coords[0]]
+        for (x0, y0), (x1, y1) in zip(coords, coords[1:]):
+            q = (0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1)
+            r = (0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1)
+            nxt.extend([q, r])
+        nxt.append(coords[-1])
+        coords = nxt
+    return coords
+
+def _dist_point_to_segment(
+    px: float, py: float, ax: float, ay: float, bx: float, by: float
+) -> float:
+    dx, dy = bx - ax, by - ay
+    len_sq = dx * dx + dy * dy
+    if len_sq <= 1e-9:
+        return math.hypot(px - ax, py - ay)
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len_sq))
+    proj_x = ax + t * dx
+    proj_y = ay + t * dy
+    return math.hypot(px - proj_x, py - proj_y)
 
 
-def bbox_of(pts, pad=0.0):
-    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-    return (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
-
-
-def overlaps(bb, x0, y0, x1, y1):
-    return not (bb[2] < x0 or bb[0] > x1 or bb[3] < y0 or bb[1] > y1)
-
-
-def make_name(rng, kind, genre="apocalypse"):
-    g = GENRE_DATA.get(genre, GENRE_DATA["apocalypse"])
-    if kind == "farm":
-        return rng.choice(g["farm_names"]).strip() + g["farm_suffix"]
-    return rng.choice(g["name_a"]).strip() + rng.choice(g["name_b"])
-
-
-def make_params(rng, layout):
-    """The macro layout, in unit-square coordinates (u runs west to east, v north to south)."""
-    if layout == "washington":
-        p = {"coast": 0.12 + rng.uniform(-0.015, 0.015), "ridge": 0.50 + rng.uniform(-0.03, 0.03),
-             "ridge_w": 0.075 + rng.uniform(-0.01, 0.01),
-             "passes": [0.27 + rng.uniform(-0.04, 0.04), 0.70 + rng.uniform(-0.04, 0.04)],
-             "sound": True, "oly": True, "m": 0}
-    else:
-        p = {"coast": rng.uniform(0.06, 0.22), "ridge": rng.uniform(0.34, 0.66), "ridge_w": rng.uniform(0.05, 0.10),
-             "passes": sorted(rng.uniform(0.12, 0.88) for _ in range(rng.randint(1, 3))),
-             "sound": rng.random() < 0.7, "oly": rng.random() < 0.5, "m": rng.randrange(8)}
-    p["sound_u"] = p["coast"] + 0.11 + rng.uniform(-0.01, 0.015)
-    p["sound_v0"] = 0.07 + rng.uniform(0, 0.03)
-    p["sound_v1"] = 0.48 + rng.uniform(-0.04, 0.06)
-    p["oly_u"], p["oly_v"] = p["coast"] + 0.05, 0.22 + rng.uniform(-0.03, 0.05)
-    return p
-
-
+@dataclass
 class Settlement:
-    __slots__ = ("kind", "x", "y", "radius", "name", "uid")
+    uid: int
+    name: str
+    kind: str  # "city", "town", "village", "farm"
+    x: float
+    y: float
+    radius: float
 
-    def __init__(self, kind, x, y, radius, name, uid):
-        self.kind, self.x, self.y, self.radius, self.name, self.uid = kind, x, y, radius, name, uid
+    def bbox(self) -> Tuple[float, float, float, float]:
+        return (
+            self.x - self.radius,
+            self.y - self.radius,
+            self.x + self.radius,
+            self.y + self.radius,
+        )
 
+@dataclass
+class WorldGen:
+    CHUNK_FT: int = 250
+    seed: int = 1337
+    genre: str = "Contagion"
+    density: int = 1  # 0=low, 1=med, 2=high
+    zombies: Dict[str, bool] = field(
+        default_factory=lambda: {
+            "cars": True,
+            "barricades": True,
+            "rubble": True,
+            "overgrowth": True,
+            "zombies": True,
+        }
+    )
+    include_buildings: bool = True
+    state_bounds: Tuple[float, float, float, float] = (-6000.0, -6000.0, 6000.0, 6000.0)
+    cities: List[Settlement] = field(default_factory=list)
+    towns: List[Settlement] = field(default_factory=list)
+    villages: List[Settlement] = field(default_factory=list)
+    farms: List[Settlement] = field(default_factory=list)
+    highways: List[dict] = field(default_factory=list)
+    rivers: List[dict] = field(default_factory=list)
+    custom_settlements: List[Settlement] = field(default_factory=list)
+    state_tiles: List[Tuple[int, int]] = field(default_factory=list)
+    layout: str = "grid"
 
-class World:
-    def __init__(self, seed=1, layout="washington", width_mi=240, height_mi=160, density=1,
-                 zombies=None, genre="apocalypse"):
-        self.seed = int(seed)
-        self.layout = layout
-        self.genre = genre if genre in GENRE_DATA else "apocalypse"
-        self.W, self.H = width_mi * MILE, height_mi * MILE
-        self.x0, self.y0 = -self.W / 2, -self.H / 2
-        self.density = max(0, min(2, int(density)))
-        self.zombies = dict(cars=True, barricades=True, rubble=True, overgrowth=True, zombies=True)
-        if zombies is not None:
-            self.zombies.update(zombies)
-        rng = random.Random(mix(self.seed, 1))
-        self.P = make_params(rng, layout)
-        self.M = MATS[self.P["m"]]
+    def __init__(self, **kwargs) -> None:
+        for f in self.__dataclass_fields__.values():
+            if f.name in kwargs:
+                setattr(self, f.name, kwargs.pop(f.name))
+            elif f.default_factory is not MISSING:
+                setattr(self, f.name, f.default_factory())
+            elif f.default is not MISSING:
+                setattr(self, f.name, f.default)
+        self._extra_opts = kwargs
+        self.done: set = set()
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
+        if self.genre not in GENRE_DATA:
+            self.genre = "Contagion"
+        self.density = max(0, min(2, int(self.density)))
+        self.x0, self.y0, self.x1, self.y1 = self.state_bounds
+        self.W = self.x1 - self.x0
+        self.H = self.y1 - self.y0
         self.done = set()
-        self._tiles, self._troads = {}, {}
-        self._build_grid()
-        self._build_rivers(rng)
         self._build_state_settlements()
-        self._build_highways()
+        self._build_rivers()
 
-    # ------------------------------------------------------------------ the shape of the land
-    def macro(self, mu, mv):
-        P, s = self.P, self.seed
-        coast = P["coast"] + 0.05 * (fbm(mv * 4, 3.7, s + 1, 3) - 0.5)
-        land = smooth(coast - 0.025, coast + 0.025, mu)
-        ridge_c = P["ridge"] + 0.07 * (fbm(mv * 2.5, 9.1, s + 2, 2) - 0.5)
-        ridge = math.exp(-((mu - ridge_c) / P["ridge_w"]) ** 2)
-        for pv in P["passes"]:
-            ridge *= 1 - 0.75 * math.exp(-((mv - pv) / 0.035) ** 2)
-        rough = fbm(mu * 9, mv * 9, s + 3, 3)
-        e = 0.06 + 0.30 * land + 0.50 * ridge * land + 0.22 * (rough - 0.5) * land
-        if P["oly"]:
-            e += 0.40 * land * math.exp(-(((mu - P["oly_u"]) / 0.05) ** 2 + ((mv - P["oly_v"]) / 0.11) ** 2))
-        if P["sound"]:
-            su = P["sound_u"] + 0.025 * (fbm(mv * 6, 1.3, s + 4, 2) - 0.5)
-            along = (smooth(P["sound_v0"] - 0.03, P["sound_v0"] + 0.02, mv)
-                     * (1 - smooth(P["sound_v1"] - 0.04, P["sound_v1"] + 0.03, mv)))
-            width = 0.022 + 0.02 * fbm(mv * 9, 5.5, s + 5, 2)
-            trough = along * math.exp(-((mu - su) / width) ** 2)
-            trough *= 1 - min(1.0, max(0.0, fbm(mu * 40, mv * 40, s + 6, 2) - 0.62) * 5)
-            e = e * (1 - trough) + (SEA - 0.06) * trough
-            strait = (math.exp(-((mv - P["sound_v0"]) / 0.022) ** 2)
-                      * smooth(coast - 0.03, coast, mu) * (1 - smooth(su, su + 0.03, mu)))
-            e = e * (1 - strait) + (SEA - 0.06) * strait
-        lake = max(0.0, fbm(mu * 7, mv * 7, s + 7, 2) - 0.70)
-        if e < 0.5:
-            e -= 2.2 * lake * land
-        maritime = 1 - smooth(coast, coast + 0.3, mu)
-        rain = smooth(ridge_c - 0.25, ridge_c - 0.05, mu)
-        shadow = smooth(ridge_c + 0.02, ridge_c + 0.22, mu)
-        moist = 0.45 + 0.30 * maritime + 0.35 * rain - 0.55 * shadow + 0.25 * (fbm(mu * 6, mv * 6, s + 8, 2) - 0.5)
-        moist += 0.25 * max(0.0, e - 0.45)
-        return max(0.0, e), max(0.0, min(1.0, moist))
+    def stats(self) -> dict:
+        return {
+            "cities": len(self.cities),
+            "towns": len(self.towns),
+            "villages": len(self.villages),
+            "farms": len(self.farms),
+            "highways": len(self.highways),
+            "rivers": len(self.rivers),
+        }
 
-    def _to_macro(self, x, y):
-        cu, cv = (x - self.x0) / self.W - 0.5, (y - self.y0) / self.H - 0.5
-        a, b, c, d = self.M
-        return a * cu + b * cv + 0.5, c * cu + d * cv + 0.5
+    def inside(self, x: float, y: float) -> bool:
+        return self.x0 <= x <= self.x1 and self.y0 <= y <= self.y1
 
-    def _from_macro(self, mu, mv):
-        cu, cv = mu - 0.5, mv - 0.5
-        a, b, c, d = self.M
-        return self.x0 + (a * cu + c * cv + 0.5) * self.W, self.y0 + (b * cu + d * cv + 0.5) * self.H
+    @staticmethod
+    def overlaps(
+        bbox: Tuple[float, float, float, float],
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+    ) -> bool:
+        bx0, by0, bx1, by1 = bbox
+        return max(bx0, x0) <= min(bx1, x1) and max(by0, y0) <= min(by1, y1)
 
-    def eval_macro(self, x, y):
-        return self.macro(*self._to_macro(x, y))
+    def elevation(self, x: float, y: float) -> float:
+        s = float(self.seed)
+        w1 = math.sin(x * 0.00042 + s * 0.013) * math.cos(y * 0.00039 - s * 0.007)
+        w2 = math.sin((x * 0.00095 - y * 0.00078) + s * 0.021) * 0.45
+        w3 = math.cos((x + y) * 0.0021 - s * 0.017) * 0.20
+        return w1 + w2 + w3
 
-    def terrain(self, x, y):
-        gx, gy = (x - self.x0) / CELL_FT, (y - self.y0) / CELL_FT
-        if 0 <= gx < self.gw - 1 and 0 <= gy < self.gh - 1:
-            i, j = int(gx), int(gy)
-            fx, fy = gx - i, gy - j
-            g, k = self.gw, int(gy) * self.gw + int(gx)
-            E, Mo = self.E, self.Mo
-            e = E[k] + (E[k + 1] - E[k]) * fx + (E[k + g] - E[k]) * fy + (E[k] - E[k + 1] - E[k + g] + E[k + g + 1]) * fx * fy
-            m = Mo[k] + (Mo[k + 1] - Mo[k]) * fx + (Mo[k + g] - Mo[k]) * fy + (Mo[k] - Mo[k + 1] - Mo[k + g] + Mo[k + g + 1]) * fx * fy
-        else:
-            e, m = self.eval_macro(x, y)
-        s = self.seed
-        e += (vnoise(x / 2400.0, y / 2400.0, s + 11) - 0.5) * 0.07 + (vnoise(x / 500.0, y / 500.0, s + 12) - 0.5) * 0.025
-        return e, m
+    def moisture(self, x: float, y: float) -> float:
+        s = float(self.seed)
+        m1 = math.cos(x * 0.00051 - s * 0.019) * math.sin(y * 0.00047 + s * 0.011)
+        m2 = math.sin((x - y) * 0.0013 + s * 0.029) * 0.35
+        return max(0.0, min(1.0, 0.5 + 0.45 * (m1 + m2)))
 
-    def biome(self, e, m, x, y):
-        if e < SEA:
-            return WATER
-        if e < SEA + 0.022:
-            return SAND
-        if e > 0.80:
-            return SNOW
-        if e > 0.66:
-            return ROCK if (m < 0.62 or e > 0.74) else FOREST
-        if m > 0.58:
-            return FOREST
-        if m > 0.40:
-            return GRASS
-        if m > 0.24 and e < 0.44 and vnoise(x / 30000.0, y / 30000.0, self.seed + 13) > 0.45:
-            return FARM
-        return SCRUB
+    def is_water(self, x: float, y: float) -> bool:
+        return self.elevation(x, y) < -0.52
 
-    def is_water(self, x, y):
-        return self.terrain(x, y)[0] < SEA
+    def biome_at(self, x: float, y: float) -> str:
+        e = self.elevation(x, y)
+        if e < -0.52:
+            return "Water"
+        m = self.moisture(x, y)
+        if e < -0.34 and m > 0.55:
+            return "Marsh"
+        if e > 0.78:
+            return "Rock"
+        if e > 0.42 and m < 0.48:
+            return "Scrub"
+        if m > 0.52 or (0.05 < e < 0.65 and m > 0.38):
+            return "Forest"
+        return "Grassland"
 
-    def inside(self, x, y):
-        return self.x0 <= x <= self.x0 + self.W and self.y0 <= y <= self.y0 + self.H
+    def _name_for(self, rng: random.Random, kind: str) -> str:
+        prefixes = [
+            "Asheford",
+            "Oakridge",
+            "Pinecrest",
+            "Cedar Creek",
+            "Ironwood",
+            "Redwood",
+            "Stonebridge",
+            "Clearwater",
+            "Hawthorne",
+            "Ravenswood",
+            "Briarcliff",
+            "Mapleton",
+            "Fairview",
+            "Copperfield",
+            "Timberline",
+        ]
+        suffixes = {
+            "city": [" Metro", " City", " Crossing"],
+            "town": ["", " Town", " Junction", " Hollow"],
+            "village": [" Village", " Corners", " Siding"],
+            "farm": [" Homestead", " Ranch", " Farmstead"],
+        }
+        base = rng.choice(prefixes)
+        suf = rng.choice(suffixes.get(kind, [""]))
+        return f"{base}{suf}".strip()
 
-    def _build_grid(self):
-        self.gw, self.gh = int(self.W / CELL_FT) + 2, int(self.H / CELL_FT) + 2
-        self.E, self.Mo = [], []
-        for j in range(self.gh):
-            y = self.y0 + j * CELL_FT
-            for i in range(self.gw):
-                e, m = self.eval_macro(self.x0 + i * CELL_FT, y)
-                self.E.append(e)
-                self.Mo.append(m)
-        self.rgw, self.rgh = int(self.W / ROUTE_FT) + 1, int(self.H / ROUTE_FT) + 1
-        self.RE = [self.terrain(self.x0 + (i + 0.5) * ROUTE_FT, self.y0 + (j + 0.5) * ROUTE_FT)[0]
-                   for j in range(self.rgh) for i in range(self.rgw)]
+    def tile_settlements(self, tx: int, ty: int) -> List[Settlement]:
+        rng = random.Random(mix(self.seed, tx, ty, 404))
+        tile_size = 3000.0
+        bx0, by0 = tx * tile_size, ty * tile_size
 
-    # ------------------------------------------------------------------ rivers
-    def _build_rivers(self, rng):
-        P = self.P
-        pv = P["passes"][-1]
-        waypoints = [(0.92, -0.04), (0.90, 0.26), (0.80, 0.46), (0.64, 0.58), (P["ridge"], pv),
-                     (P["ridge"] - 0.16, pv + 0.04), (P["coast"] + 0.05, pv + 0.07), (P["coast"] - 0.03, pv + 0.08)]
-        pts = chaikin([self._from_macro(u, v) for u, v in waypoints], 4)
-        wiggled = []
-        for i, (x, y) in enumerate(pts):
-            a, b = pts[max(0, i - 1)], pts[min(len(pts) - 1, i + 1)]
-            dx, dy = b[0] - a[0], b[1] - a[1]
-            n = math.hypot(dx, dy) or 1.0
-            off = (fbm(i * 0.12, 0.3, self.seed + 20, 2) - 0.5) * 9000.0
-            wiggled.append((x - dy / n * off, y + dx / n * off))
-        self.rivers = [{"pts": wiggled, "width": 1300.0, "bbox": bbox_of(wiggled, 2000)}]
-        gw, gh, RE = self.rgw, self.rgh, self.RE
-        high = [(i, j) for j in range(gh) for i in range(gw) if RE[j * gw + i] > 0.62]
-        rng.shuffle(high)
-        for i, j in high[:8 + 4 * self.density]:
-            path, seen = [(i, j)], {(i, j)}
-            for _ in range(300):
-                ci, cj = path[-1]
-                best, low = None, RE[cj * gw + ci]
-                for di, dj in NB8:
-                    ni, nj = ci + di, cj + dj
-                    if 0 <= ni < gw and 0 <= nj < gh and (ni, nj) not in seen:
-                        e = RE[nj * gw + ni] + rng.random() * 0.01
-                        if e < low:
-                            best, low = (ni, nj), e
-                if best is None:
-                    break
-                path.append(best)
-                seen.add(best)
-                if RE[best[1] * gw + best[0]] < SEA:
-                    break
-            if len(path) < 6:
-                continue
-            pts = [(self.x0 + (a + 0.5 + rng.uniform(-0.3, 0.3)) * ROUTE_FT,
-                    self.y0 + (b + 0.5 + rng.uniform(-0.3, 0.3)) * ROUTE_FT) for a, b in path]
-            pts = chaikin(pts, 3)
-            self.rivers.append({"pts": pts, "width": min(650.0, 140.0 + len(path) * 22.0), "bbox": bbox_of(pts, 1000)})
+        density_scale = {0: 0.65, 1: 1.0, 2: 1.35}[self.density]
+        plan = (
+            ("town", min(0.95, 0.55 * density_scale), 1300.0, 2100.0),
+            ("village", min(0.98, 0.72 * density_scale), 750.0, 1200.0),
+            ("farm", min(0.99, 0.85 * density_scale), 300.0, 460.0),
+        )
 
-    # ------------------------------------------------------------------ settlements and roads
-    def tile_settlements(self, tx, ty):
-        key = (tx, ty)
-        got = self._tiles.get(key)
-        if got is not None:
-            return got
-        rng = random.Random(mix(self.seed, tx, ty, 5))
-        dens = (0.55, 1.0, 1.8)[self.density]
-        plan = (("city", 0.040 * dens, 3500, 6000, 30000.0), ("town", 0.30 * dens, 1500, 2600, 9000.0),
-                ("village", 1.4 * dens, 600, 1000, 4500.0), ("farm", 3.5 * dens, 260, 380, 2500.0))
-        out, made = [], 0
-        for kind, lam, r0, r1, spacing in plan:
-            n = int(lam) + (1 if rng.random() < lam - int(lam) else 0)
-            for _ in range(n):
-                for _try in range(14):
-                    x, y = (tx + rng.random()) * TILE_FT, (ty + rng.random()) * TILE_FT
-                    e, m = self.terrain(x, y)
-                    if not (SEA + 0.04 < e < 0.58) or self.biome(e, m, x, y) in (WATER, SAND, ROCK, SNOW):
+        out: List[Settlement] = []
+        slots = 1 if self.density == 0 else (2 if self.density == 1 else 3)
+        for _ in range(slots):
+            for kind, prob, r_min, r_max in plan:
+                if rng.random() < prob:
+                    sx = bx0 + rng.uniform(350.0, tile_size - 350.0)
+                    sy = by0 + rng.uniform(350.0, tile_size - 350.0)
+                    if not self.inside(sx, sy) or self.is_water(sx, sy):
                         continue
-                    r = rng.uniform(r0, r1)
-                    if any(math.hypot(x - o.x, y - o.y) < max(spacing, o.radius + r + 150) for o in out):
+                    if any(math.hypot(s.x - sx, s.y - sy) < 650.0 for s in out):
                         continue
-                    out.append(Settlement(kind, x, y, r, make_name(rng, kind, self.genre), mix(tx, ty, made) & 0x7FFFFFFF))
-                    made += 1
-                    break
-        self._tiles[key] = out
+                    uid = mix(self.seed, tx, ty, len(out), RANK[kind]) & 0x7FFFFFFF
+                    out.append(
+                        Settlement(
+                            uid=uid,
+                            name=self._name_for(rng, kind),
+                            kind=kind,
+                            x=sx,
+                            y=sy,
+                            radius=rng.uniform(r_min, r_max),
+                        )
+                    )
         return out
 
-    def _tile_keys(self, x0, y0, x1, y1, margin=0):
-        return [(tx, ty) for tx in range(math.floor(x0 / TILE_FT) - margin, math.floor(x1 / TILE_FT) + 1 + margin)
-                for ty in range(math.floor(y0 / TILE_FT) - margin, math.floor(y1 / TILE_FT) + 1 + margin)]
-
-    def settlements_near(self, x, y, r):
-        out = []
-        for key in self._tile_keys(x - r, y - r, x + r, y + r):
-            out.extend(s for s in self.tile_settlements(*key) if math.hypot(s.x - x, s.y - y) < r)
-        return out
-
-    def settlements_in_rect(self, x0, y0, x1, y1):
-        keys = self._tile_keys(x0, y0, x1, y1)
-        if len(keys) > 150:
-            keys = [k for k in keys if k in self._tiles]
-        return [s for k in keys for s in self.tile_settlements(*k) if x0 - 6000 <= s.x <= x1 + 6000 and y0 - 6000 <= s.y <= y1 + 6000]
-
-    def _crosses_water(self, ax, ay, bx, by):
-        d = math.hypot(bx - ax, by - ay)
-        n = max(2, int(d / MILE))
-        return any(self.is_water(ax + (bx - ax) * i / n, ay + (by - ay) * i / n) for i in range(1, n))
-
-    def tile_roads(self, tx, ty):
-        key = (tx, ty)
-        got = self._troads.get(key)
-        if got is not None:
-            return got
-        around = [s for dx in (-1, 0, 1) for dy in (-1, 0, 1) for s in self.tile_settlements(tx + dx, ty + dy)]
-        out = []
-        for s in self.tile_settlements(tx, ty):
-            if s.kind == "city":
-                continue
-            cand = [o for o in around if RANK[o.kind] > RANK[s.kind] or (RANK[o.kind] == RANK[s.kind] and o.uid < s.uid)]
-            cand.sort(key=lambda o: (o.x - s.x) ** 2 + (o.y - s.y) ** 2)
-            for o in cand[:3]:
-                d = math.hypot(o.x - s.x, o.y - s.y)
-                if d > 20 * MILE:
-                    break
-                if self._crosses_water(s.x, s.y, o.x, o.y):
-                    continue
-                r = random.Random(mix(self.seed, s.uid, o.uid))
-                off = (r.random() - 0.5) * 0.15 * d
-                mx, my = (s.x + o.x) / 2, (s.y + o.y) / 2
-                nx, ny = (o.y - s.y) / (d or 1.0), -(o.x - s.x) / (d or 1.0)
-                pts = chaikin([(s.x, s.y), (mx + nx * off, my + ny * off), (o.x, o.y)], 2)
-                kind = "county" if s.kind == "town" else "spur"
-                out.append({"kind": kind, "pts": pts, "width": 24.0 if kind == "county" else 14.0, "bbox": bbox_of(pts, 40)})
-                break
-        self._troads[key] = out
-        return out
-
-    def roads_in_rect(self, x0, y0, x1, y1, minor=True):
-        out = [h for h in self.highways if overlaps(h["bbox"], x0, y0, x1, y1)]
-        if minor:
-            keys = self._tile_keys(x0, y0, x1, y1, margin=2)
-            if len(keys) > 150:
-                keys = [k for k in keys if k in self._troads]
-            for key in keys:
-                out.extend(r for r in self.tile_roads(*key) if overlaps(r["bbox"], x0, y0, x1, y1))
-        return out
-
-    def _build_state_settlements(self):
-        tx0, tx1 = math.floor(self.x0 / TILE_FT), math.floor((self.x0 + self.W) / TILE_FT)
-        ty0, ty1 = math.floor(self.y0 / TILE_FT), math.floor((self.y0 + self.H) / TILE_FT)
+    def _build_state_settlements(self) -> None:
+        tile_size = 3000.0
+        tx0, tx1 = math.floor(self.x0 / tile_size), math.floor(self.x1 / tile_size)
+        ty0, ty1 = math.floor(self.y0 / tile_size), math.floor(self.y1 / tile_size)
         self.state_tiles = [(tx, ty) for tx in range(tx0, tx1 + 1) for ty in range(ty0, ty1 + 1)]
-        everyone = [s for key in self.state_tiles for s in self.tile_settlements(*key) if self.inside(s.x, s.y)]
-        self.cities = [s for s in everyone if s.kind == "city"]
+
+        everyone = [
+            s
+            for key in self.state_tiles
+            for s in self.tile_settlements(*key)
+            if self.inside(s.x, s.y)
+        ]
+        everyone.extend(self.custom_settlements)
+
+        self.cities = []
         self.towns = [s for s in everyone if s.kind == "town"]
-        want = 3 if self.W * self.H > 15000 * MILE * MILE else 2
-        while len(self.cities) < want and self.towns:
+        self.villages = [s for s in everyone if s.kind == "village"]
+        self.farms = [s for s in everyone if s.kind == "farm"]
+
+        want_cities = max(2, len(self.towns) // 4) if self.towns else 0
+        while len(self.cities) < want_cities and self.towns:
             t = max(self.towns, key=lambda s: s.radius)
             self.towns.remove(t)
-            t.kind, t.radius = "city", max(t.radius * 2.0, 3500.0)
+            t.kind = "city"
+            t.radius = max(t.radius, 2400.0)
             self.cities.append(t)
-        for key in self.state_tiles:
-            self.tile_roads(*key)
 
-    # ------------------------------------------------------------------ highways between the cities
-    def _route(self, a, b):
-        gw, gh, RE = self.rgw, self.rgh, self.RE
+        if not self.cities and not self.towns and self.inside(0.0, 0.0) and not self.is_water(0.0, 0.0):
+            self.towns.append(
+                Settlement(
+                    uid=mix(self.seed, 0, 0, RANK["town"]) & 0x7FFFFFFF,
+                    name=self._name_for(random.Random(self.seed), "town"),
+                    kind="town",
+                    x=0.0,
+                    y=0.0,
+                    radius=1600.0,
+                )
+            )
 
-        def node(s):
-            return (min(gw - 1, max(0, int((s.x - self.x0) / ROUTE_FT))),
-                    min(gh - 1, max(0, int((s.y - self.y0) / ROUTE_FT))))
+        self._build_state_highways()
 
-        start, goal = node(a), node(b)
-        if start == goal:
-            return None
-        heap, g, came = [(0.0, start)], {start: 0.0}, {}
-        while heap:
-            _f, cur = heapq.heappop(heap)
-            if cur == goal:
-                break
-            ci, cj = cur
-            e0 = RE[cj * gw + ci]
-            for di, dj in NB8:
-                ni, nj = ci + di, cj + dj
-                if not (0 <= ni < gw and 0 <= nj < gh):
-                    continue
-                e = RE[nj * gw + ni]
-                if e < SEA and (ni, nj) != goal:
-                    continue
-                step = ROUTE_FT * (1.4142 if di and dj else 1.0)
-                ng = g[cur] + step * (1.0 + 30.0 * abs(e - e0) + 40.0 * max(0.0, e - 0.5) ** 2)
-                if ng < g.get((ni, nj), 1e30):
-                    g[(ni, nj)], came[(ni, nj)] = ng, cur
-                    heapq.heappush(heap, (ng + math.hypot(goal[0] - ni, goal[1] - nj) * ROUTE_FT, (ni, nj)))
-        if goal not in came:
-            return None
-        path = [goal]
-        while path[-1] != start:
-            path.append(came[path[-1]])
-        path.reverse()
-        pts = [(a.x, a.y)] + [(self.x0 + (i + 0.5) * ROUTE_FT, self.y0 + (j + 0.5) * ROUTE_FT) for i, j in path[1:-1]] + [(b.x, b.y)]
-        return chaikin(pts, 2)
+    def _make_curved_road(
+        self,
+        a: Tuple[float, float],
+        b: Tuple[float, float],
+        width: float,
+        style: str,
+        curve_amp: float = 220.0,
+    ) -> dict:
+        x1, y1 = a
+        x2, y2 = b
+        dx, dy = x2 - x1, y2 - y1
+        dist = math.hypot(dx, dy)
+        if dist < 1e-5:
+            return {"pts": [a, b], "width": width, "style": style}
+        nx, ny = -dy / dist, dx / dist
+        offset = math.sin((x1 + y1 + x2 + y2) * 0.0015 + self.seed) * min(curve_amp, dist * 0.14)
+        mx = (x1 + x2) * 0.5 + nx * offset
+        my = (y1 + y2) * 0.5 + ny * offset
+        return {
+            "pts": [(x1, y1), (mx, my), (x2, y2)],
+            "width": width,
+            "style": style,
+        }
 
-    def _build_highways(self):
+    def _build_state_highways(self) -> None:
         self.highways = []
-        cities = self.cities
-        if len(cities) < 2:
-            return
-        linked, edges = {0}, []
-        while len(linked) < len(cities):
-            best = None
-            for i in linked:
-                for j in range(len(cities)):
-                    if j not in linked:
-                        d = math.hypot(cities[i].x - cities[j].x, cities[i].y - cities[j].y)
-                        if best is None or d < best[0]:
-                            best = (d, i, j)
-            edges.append((best[1], best[2]))
-            linked.add(best[2])
-        for i, c in enumerate(cities):
-            near = sorted((j for j in range(len(cities)) if j != i and (i, j) not in edges and (j, i) not in edges),
-                          key=lambda j: math.hypot(c.x - cities[j].x, c.y - cities[j].y))
-            if near and math.hypot(c.x - cities[near[0]].x, c.y - cities[near[0]].y) < 70 * MILE and len(edges) < len(cities) + 5:
-                edges.append((i, near[0]))
-        for i, j in edges:
-            pts = self._route(cities[i], cities[j])
-            if pts:
-                self.highways.append({"kind": "highway", "pts": pts, "width": 60.0, "bbox": bbox_of(pts, 100)})
+        main_style = GENRE_DATA[self.genre]["road_style"]
+        sec_style = GENRE_DATA[self.genre]["secondary_style"]
+        hubs = self.cities + self.towns
 
-    def start_point(self):
-        if self.cities:
-            c = max(self.cities, key=lambda s: s.radius)
-            return c.x, c.y
-        return 0.0, 0.0
+        if len(hubs) >= 2:
+            connected = {hubs[0].uid}
+            remaining = list(hubs[1:])
+            hub_by_id = {h.uid: h for h in hubs}
 
-    def stats(self):
-        return {"cities": len(self.cities), "towns": len(self.towns), "highways": len(self.highways),
-                "rivers": len(self.rivers)}
-
-    # ------------------------------------------------------------------ street-level detail
-    def plan_chunk(self, cx, cy):
-        """Streets, buildings, props and encounters for one 800 ft chunk, as plain dictionaries (feet)."""
-        x0, y0 = cx * CHUNK_FT, cy * CHUNK_FT
-        x1, y1 = x0 + CHUNK_FT, y0 + CHUNK_FT
-        rng = random.Random(mix(self.seed, cx, cy, 91))
-        specs = []
-        mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-        near = [s for s in self.settlements_near(mx, my, 7000.0) if math.hypot(s.x - mx, s.y - my) < s.radius + CHUNK_FT * 0.71]
-        near.sort(key=lambda s: -RANK[s.kind])
-        for s in near[:2]:
-            self._plan_settlement(s, x0, y0, x1, y1, rng, specs)
-        self._plan_roadside(x0, y0, x1, y1, rng, specs)
-        return specs
-
-    def _building(self, specs, built, rng, x, y, w, h, zone, frac):
-        g = GENRE_DATA[self.genre]
-        labels = g["labels"]
-        if zone == "downtown":
-            kind = rng.choice(("Shop", "Shop", "Warehouse", "Inn"))
-        elif frac < 0.45 and rng.random() < (0.5 if zone == "city" else 0.3):
-            kind = rng.choice(("Shop", "Shop", "Warehouse", "Inn"))
-        elif zone == "village" and rng.random() < 0.12:
-            kind = "Barn"
-        else:
-            kind = "House"
-        label = rng.choice(labels[kind]) if kind in labels and rng.random() < 0.6 else ""
-        specs.append({"t": "building", "x": x, "y": y, "w": w, "h": h, "kind": kind, "label": label})
-        built.append((x, y, w, h))
-
-    def _enemy(self, specs, built, rng, x0, y0, x1, y1, s=None):
-        enemy_table = GENRE_DATA[self.genre]["enemies"]
-        for _ in range(8):
-            x, y = round(rng.uniform(x0, x1) / 5) * 5, round(rng.uniform(y0, y1) / 5) * 5
-            if s is not None and math.hypot(x - s.x, y - s.y) > s.radius:
-                continue
-            if any(bx - 3 < x < bx + bw + 3 and by - 3 < y < by + bh + 3 for bx, by, bw, bh in built):
-                continue
-            if self.is_water(x, y):
-                continue
-            r, acc, kind = rng.random(), 0.0, enemy_table[-1][0]
-            for name, weight in enemy_table:
-                acc += weight
-                if r < acc:
-                    kind = name
+            while remaining:
+                best = None
+                best_d = float("inf")
+                for u_id in connected:
+                    u = hub_by_id[u_id]
+                    for v in remaining:
+                        d = math.hypot(v.x - u.x, v.y - u.y)
+                        if d < best_d:
+                            best_d = d
+                            best = (u, v)
+                if best is None:
                     break
-            specs.append({"t": "token", "kind": kind, "x": x, "y": y})
-            return
+                u, v = best
+                connected.add(v.uid)
+                remaining.remove(v)
+                width = 36.0 if ("city" in (u.kind, v.kind)) else 26.0
+                self.highways.append(self._make_curved_road((u.x, u.y), (v.x, v.y), width, main_style))
 
-    def _plan_settlement(self, s, x0, y0, x1, y1, rng, specs):
-        if s.kind == "farm":
-            self._plan_farm(s, x0, y0, x1, y1, rng, specs)
-            return
-        g = GENRE_DATA[self.genre]
-        road_style = g["road_style"]
-        veh_ok, veh_bad = g["vehicles"]
-        pitch, sw = {"city": (300.0, 32.0), "town": (260.0, 28.0), "village": (220.0, 24.0)}[s.kind]
-        R, zf = s.radius, self.zombies
-        dz = (0.6, 1.0, 1.6)[self.density]
-        streets, built = [], []
-        for axis in (0, 1):
-            lo, hi = (x0, x1) if axis == 0 else (y0, y1)
-            c0, cc = (s.x, s.y) if axis == 0 else (s.y, s.x)
-            a_lo, a_hi = (y0, y1) if axis == 0 else (x0, x1)
-            for k in range(math.ceil((lo - c0) / pitch), math.ceil((hi - c0) / pitch)):
-                pos = c0 + k * pitch
-                off = abs(pos - c0)
-                if off >= R:
-                    continue
-                half = math.sqrt(R * R - off * off)
-                a, b = max(a_lo, cc - half), min(a_hi, cc + half)
-                if b - a < 20:
-                    continue
-                pts = [(pos, a), (pos, b)] if axis == 0 else [(a, pos), (b, pos)]
-                if self.is_water((pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2):
-                    continue
-                width = sw + (18.0 if s.kind == "city" and k % 4 == 0 else 0.0)
-                specs.append({"t": "road", "pts": pts, "width": width, "style": road_style})
-                streets.append((pts[0], pts[1], width))
-        for bi in range(math.ceil((x0 - s.x) / pitch - 0.5), math.ceil((x1 - s.x) / pitch - 0.5)):
-            for bj in range(math.ceil((y0 - s.y) / pitch - 0.5), math.ceil((y1 - s.y) / pitch - 0.5)):
-                bx, by = s.x + bi * pitch, s.y + bj * pitch
-                cxm, cym = bx + pitch / 2, by + pitch / 2
-                d = math.hypot(cxm - s.x, cym - s.y)
-                if d > R * 0.97 or self.is_water(cxm, cym):
-                    continue
-                brng = random.Random(mix(self.seed, s.uid, bi, bj))
-                frac = d / R
-                p_fill = (0.92 - 0.55 * frac) if s.kind == "city" else (0.78 - 0.45 * frac)
-                ix, iy, iw = bx + sw / 2 + 5, by + sw / 2 + 5, pitch - sw - 10
-                if s.kind == "city" and frac < 0.28:
-                    w, h = iw * brng.uniform(0.7, 0.95), iw * brng.uniform(0.6, 0.9)
-                    self._building(specs, built, brng, ix + (iw - w) / 2, iy + (iw - h) / 2, w, h, "downtown", frac)
-                    continue
-                for row in (0, 1):
-                    depth = brng.uniform(34, 50)
-                    y = iy + 2 if row == 0 else iy + iw - depth - 2
-                    x = ix
-                    while x < ix + iw - 30:
-                        lw = min(brng.uniform(38, 68), ix + iw - x)
-                        if lw < 28:
-                            break
-                        if brng.random() < p_fill:
-                            bw = lw - brng.uniform(6, 12)
-                            self._building(specs, built, brng, x + (lw - bw) / 2, y, bw,
-                                           depth * brng.uniform(0.8, 1.0), s.kind, frac)
-                        x += lw
-        if zf.get("cars"):
-            cd = {"city": 0.35, "town": 0.25, "village": 0.18}[s.kind] * dz
-            for a, b, width in streets:
-                ex = math.hypot(b[0] - a[0], b[1] - a[1]) / 260.0 * cd
-                horizontal = abs(a[1] - b[1]) < 1e-6
-                for _ in range(int(ex) + (1 if rng.random() < ex - int(ex) else 0)):
-                    t = rng.random()
-                    x, y = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
-                    lane = rng.choice((-1, 1)) * width * 0.25
-                    x, y = (x, y + lane) if horizontal else (x + lane, y)
-                    wreck = rng.random() < 0.3
-                    rot = (0 if horizontal else 90) + rng.choice((0, 180)) + (rng.uniform(-40, 40) if wreck else rng.uniform(-6, 6))
-                    specs.append({"t": "prop", "kind": veh_bad if wreck else veh_ok, "x": x, "y": y, "rot": rot})
-        if zf.get("barricades") and streets and rng.random() < (0.28 if s.kind == "city" else 0.35) * dz:
-            a, b, width = rng.choice(streets)
-            t = rng.uniform(0.2, 0.8)
-            specs.append({"t": "prop", "kind": "barricade", "x": a[0] + (b[0] - a[0]) * t, "y": a[1] + (b[1] - a[1]) * t,
-                          "rot": 90 if abs(a[1] - b[1]) < 1e-6 else 0, "w": width + 4, "h": 3.5})
-        for x, y, w, h in built:
-            if zf.get("rubble") and rng.random() < 0.07 * dz:
-                specs.append({"t": "prop", "kind": "rubble", "x": x + rng.uniform(0, w), "y": y + h + rng.uniform(2, 8),
-                              "rot": rng.uniform(0, 360)})
-            if zf.get("overgrowth") and math.hypot(x - s.x, y - s.y) > 0.55 * R and rng.random() < 0.12 * dz:
-                specs.append({"t": "prop", "kind": "overgrowth", "x": x + rng.uniform(0, w), "y": y + rng.uniform(0, h),
-                              "rot": rng.uniform(0, 360)})
-        if zf.get("zombies"):
-            base = {"city": 5.5, "town": 2.5, "village": 1.0}[s.kind] * dz
-            if math.hypot((x0 + x1) / 2 - s.x, (y0 + y1) / 2 - s.y) > R * 0.9:
-                base *= 0.4
-            for _ in range(int(base) + (1 if rng.random() < base - int(base) else 0)):
-                self._enemy(specs, built, rng, x0, y0, x1, y1, s)
+            extra_per_hub = {0: 1, 1: 2, 2: 3}[self.density]
+            for i, a in enumerate(hubs):
+                nearest = sorted(
+                    (h for j, h in enumerate(hubs) if j != i),
+                    key=lambda h: math.hypot(h.x - a.x, h.y - a.y),
+                )[:extra_per_hub]
+                for b in nearest:
+                    if i < hubs.index(b) and math.hypot(b.x - a.x, b.y - a.y) < 5200.0:
+                        width = 30.0 if ("city" in (a.kind, b.kind)) else 22.0
+                        self.highways.append(self._make_curved_road((a.x, a.y), (b.x, b.y), width, main_style))
 
-    def _plan_farm(self, s, x0, y0, x1, y1, rng, specs):
-        if not (x0 <= s.x < x1 and y0 <= s.y < y1):
-            return
-        g = GENRE_DATA[self.genre]
-        f, zf = random.Random(mix(self.seed, s.uid, 7)), self.zombies
-        dz = (0.6, 1.0, 1.6)[self.density]
-        built = [(s.x - 22, s.y - 16, 44, 32), (s.x + 40, s.y - 22, 60, 42)]
-        fx0, fy0, fx1, fy1 = s.x - 260, s.y + 70, s.x + 260, s.y + 330
-        specs.append({"t": "terrain", "name": "Farmland", "pts": [(fx0, fy0), (fx1, fy0), (fx1, fy1), (fx0, fy1), (fx0, fy0)]})
-        specs.append({"t": "building", "x": built[0][0], "y": built[0][1], "w": 44, "h": 32, "kind": "House", "label": ""})
-        specs.append({"t": "building", "x": built[1][0], "y": built[1][1], "w": 60, "h": 42, "kind": "Barn", "label": ""})
-        c = [(s.x - 34, s.y - 36), (s.x + 112, s.y - 36), (s.x + 112, s.y + 40), (s.x - 34, s.y + 40)]
-        for i in range(4):
-            specs.append({"t": "fence", "pts": [c[i], c[(i + 1) % 4]], "style": g["fence_style"]})
-        specs.append({"t": "road", "pts": [(s.x + 112, s.y + 10), (s.x + 330, s.y + 10)], "width": 12.0, "style": g["farm_road_style"]})
-        if zf.get("cars") and f.random() < 0.6:
-            specs.append({"t": "prop", "kind": f.choice(g["vehicles"]), "x": s.x + 60, "y": s.y + 56, "rot": f.uniform(0, 360)})
-        if zf.get("overgrowth") and f.random() < 0.5:
-            specs.append({"t": "prop", "kind": "overgrowth", "x": s.x - 50, "y": s.y + 20, "rot": f.uniform(0, 360)})
-        if zf.get("zombies"):
-            for _ in range(int(f.choice((0, 0, 1, 2)) * dz + 0.5)):
-                self._enemy(specs, built, f, s.x - 60, s.y - 60, s.x + 140, s.y + 80)
+        for s in self.villages:
+            snap_x, snap_y = self.snap_to_nearest_road(s.x, s.y, max_snap=3200.0)
+            if (snap_x, snap_y) != (s.x, s.y):
+                self.highways.append(self._make_curved_road((s.x, s.y), (snap_x, snap_y), 16.0, sec_style, 120.0))
 
-    def _plan_roadside(self, x0, y0, x1, y1, rng, specs):
-        zf = self.zombies
-        if not (zf.get("cars") or zf.get("zombies")):
-            return
-        g = GENRE_DATA[self.genre]
-        veh_ok, veh_bad = g["vehicles"]
-        dz = (0.6, 1.0, 1.6)[self.density]
-        for road in self.roads_in_rect(x0 - 60, y0 - 60, x1 + 60, y1 + 60):
-            width = road["width"]
-            for (ax, ay), (bx, by) in zip(road["pts"], road["pts"][1:]):
-                seg = math.hypot(bx - ax, by - ay)
-                if seg < 1:
+        if self.density >= 1:
+            for f in self.farms:
+                snap_x, snap_y = self.snap_to_nearest_road(f.x, f.y, max_snap=2200.0)
+                if (snap_x, snap_y) != (f.x, f.y):
+                    self.highways.append(self._make_curved_road((f.x, f.y), (snap_x, snap_y), 11.0, "Dirt", 80.0))
+
+    def _build_rivers(self) -> None:
+        self.rivers = []
+        rng = random.Random(mix(self.seed, 777, 1))
+        river_count = {0: 1, 1: 2, 2: 3}[self.density]
+        for idx in range(river_count):
+            px = rng.uniform(self.x0 * 0.75, self.x1 * 0.75)
+            py = rng.uniform(self.y0 * 0.75, self.y1 * 0.75)
+            pts: List[Tuple[float, float]] = [(px, py)]
+            angle = rng.uniform(0.0, math.tau)
+            for _ in range(18):
+                e_c = self.elevation(px, py)
+                best_ang = angle
+                best_e = e_c
+                for cand in (angle - 0.35, angle, angle + 0.35):
+                    tx = px + math.cos(cand) * 450.0
+                    ty = py + math.sin(cand) * 450.0
+                    te = self.elevation(tx, ty)
+                    if te < best_e:
+                        best_e = te
+                        best_ang = cand
+                angle = best_ang + rng.uniform(-0.12, 0.12)
+                px += math.cos(angle) * 450.0
+                py += math.sin(angle) * 450.0
+                pts.append((px, py))
+                if not self.inside(px, py):
+                    break
+            if len(pts) >= 2:
+                xs = [p[0] for p in pts]
+                ys = [p[1] for p in pts]
+                self.rivers.append(
+                    {
+                        "id": idx,
+                        "pts": pts,
+                        "width": 24.0 + idx * 6.0,
+                        "bbox": (min(xs), min(ys), max(xs), max(ys)),
+                    }
+                )
+
+    def all_settlements(self) -> List[Settlement]:
+        return self.cities + self.towns + self.villages + self.farms
+
+    def settlements_near(self, x: float, y: float, max_dist: float) -> List[Settlement]:
+        return [s for s in self.all_settlements() if math.hypot(s.x - x, s.y - y) <= max_dist]
+
+    def snap_to_nearest_road(self, x: float, y: float, max_snap: float = 1200.0) -> Tuple[float, float]:
+        best_pt = (x, y)
+        best_dist = max_snap
+        for road in self.highways:
+            pts = road.get("pts", [])
+            for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+                dx, dy = x2 - x1, y2 - y1
+                len_sq = dx * dx + dy * dy
+                if len_sq <= 1e-9:
                     continue
-                ux, uy = (bx - ax) / seg, (by - ay) / seg
-                for k in range(int(seg // 90)):
-                    t = (k + rng.random()) * 90.0
-                    x, y, r = ax + ux * t, ay + uy * t, rng.random()
-                    if not (x0 <= x < x1 and y0 <= y < y1):
+                t = max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / len_sq))
+                px, py = x1 + t * dx, y1 + t * dy
+                d = math.hypot(x - px, y - py)
+                if d < best_dist:
+                    best_dist = d
+                    best_pt = (px, py)
+        return best_pt
+
+    def generate_single_town(
+        self,
+        x: float,
+        y: float,
+        name: Optional[str] = None,
+        kind: str = "town",
+        radius: float = 1600.0,
+        snap_to_road: bool = True,
+        include_buildings: bool = True,
+    ) -> Settlement:
+        tx, ty = self.snap_to_nearest_road(x, y) if snap_to_road else (x, y)
+        rng = random.Random(mix(self.seed, int(tx), int(ty), 888))
+        uid = mix(self.seed, int(tx), int(ty), len(self.custom_settlements) + 99) & 0x7FFFFFFF
+        town = Settlement(
+            uid=uid,
+            name=name or self._name_for(rng, kind),
+            kind=kind if kind in ("city", "town", "village") else "town",
+            x=tx,
+            y=ty,
+            radius=radius,
+        )
+        self.custom_settlements.append(town)
+        if town.kind == "city":
+            self.cities.append(town)
+        elif town.kind == "village":
+            self.villages.append(town)
+        else:
+            self.towns.append(town)
+
+        hubs = [h for h in (self.cities + self.towns) if h.uid != town.uid]
+        if hubs:
+            nearest = min(hubs, key=lambda h: math.hypot(h.x - town.x, h.y - town.y))
+            self.highways.append(
+                self._make_curved_road(
+                    (town.x, town.y),
+                    (nearest.x, nearest.y),
+                    26.0,
+                    GENRE_DATA[self.genre]["road_style"],
+                )
+            )
+        if include_buildings:
+            self.include_buildings = True
+        return town
+
+    def roads_in_rect(self, x0: float, y0: float, x1: float, y1: float) -> List[dict]:
+        out: List[dict] = []
+        for road in self.highways:
+            pts = road.get("pts", [])
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                if (
+                    max(ax, bx) >= x0
+                    and min(ax, bx) <= x1
+                    and max(ay, by) >= y0
+                    and min(ay, by) <= y1
+                ):
+                    out.append(road)
+                    break
+        return out
+
+    def _collect_road_segments(
+        self,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+        town_streets: List[Tuple[Tuple[float, float], Tuple[float, float], float]],
+    ) -> List[Tuple[float, float, float, float, float]]:
+        segs: List[Tuple[float, float, float, float, float]] = [
+            (a[0], a[1], b[0], b[1], w) for a, b, w in town_streets
+        ]
+        for road in self.roads_in_rect(x0 - 240.0, y0 - 240.0, x1 + 240.0, y1 + 240.0):
+            w = float(road.get("width", 26.0))
+            pts = road.get("pts", [])
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                segs.append((ax, ay, bx, by, w))
+        return segs
+
+    def _is_clear_of_roads(
+        self,
+        cx: float,
+        cy: float,
+        w: float,
+        h: float,
+        road_segments: Iterable[Tuple[float, float, float, float, float]],
+        setback: float = 10.0,
+    ) -> bool:
+        footprint_radius = 0.5 * math.hypot(w, h)
+        for ax, ay, bx, by, r_width in road_segments:
+            min_dist = (r_width * 0.5) + setback + footprint_radius * 0.65
+            if _dist_point_to_segment(cx, cy, ax, ay, bx, by) < min_dist:
+                return False
+        return True
+
+    def _settlement_road_network(
+        self, s: Settlement
+    ) -> List[Tuple[Tuple[float, float], Tuple[float, float], float, str]]:
+        """Build one main street branching cleanly off a WorldGen road plus organic side streets."""
+        s_rng = random.Random(mix(self.seed, s.uid, 5150))
+        road_style = GENRE_DATA[self.genre]["road_style"] if s.kind in ("city", "town") else "Dirt"
+        main_w = 18.0 if s.kind == "city" else (15.0 if s.kind == "town" else 11.0)
+        side_w = max(8.5, main_w * 0.72)
+
+        segments: List[Tuple[Tuple[float, float], Tuple[float, float], float, str]] = []
+
+        snap_x, snap_y = self.snap_to_nearest_road(s.x, s.y, max_snap=s.radius + 2200.0)
+        if (snap_x, snap_y) != (s.x, s.y):
+            start = (snap_x, snap_y)
+            vx, vy = s.x - snap_x, s.y - snap_y
+            vlen = max(1.0, math.hypot(vx, vy))
+            ux, uy = vx / vlen, vy / vlen
+            end_reach = min(s.radius * 0.65, 520.0 if s.kind != "farm" else 180.0)
+            end = (s.x + ux * end_reach, s.y + uy * end_reach)
+        else:
+            ang0 = s_rng.uniform(0.0, math.tau)
+            half_len = min(s.radius * 0.65, 480.0 if s.kind != "farm" else 180.0)
+            start = (s.x - math.cos(ang0) * half_len, s.y - math.sin(ang0) * half_len)
+            end = (s.x + math.cos(ang0) * half_len, s.y + math.sin(ang0) * half_len)
+
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        dist = max(1.0, math.hypot(dx, dy))
+        ux, uy = dx / dist, dy / dist
+        nx, ny = -uy, ux
+
+        # Keep the junction throat straight for ~55 ft so it branches cleanly off the highway,
+        # then curve organically through town
+        throat_len = min(55.0, dist * 0.18)
+        throat_pt = (start[0] + ux * throat_len, start[1] + uy * throat_len)
+        bend1 = s_rng.uniform(-35.0, 35.0)
+        bend2 = s_rng.uniform(-40.0, 40.0)
+        m1 = (
+            start[0] + dx * 0.42 + nx * bend1,
+            start[1] + dy * 0.42 + ny * bend1,
+        )
+        m2 = (
+            start[0] + dx * 0.74 + nx * bend2,
+            start[1] + dy * 0.74 + ny * bend2,
+        )
+        spine_nodes = [start, throat_pt, m1, m2, end]
+        for a, b in zip(spine_nodes, spine_nodes[1:]):
+            segments.append((a, b, main_w, road_style))
+
+        # Branch side streets past the highway junction (t_frac from 0.28 to 0.90)
+        branch_count = {"city": 7, "town": 5, "village": 3, "farm": 2}.get(s.kind, 4)
+        for i in range(branch_count):
+            t_frac = 0.28 + 0.62 * (i / max(1, branch_count - 1))
+            scaled = t_frac * (len(spine_nodes) - 1)
+            idx = min(len(spine_nodes) - 2, int(scaled))
+            u = scaled - idx
+            pa, pb = spine_nodes[idx], spine_nodes[idx + 1]
+            root = (pa[0] + (pb[0] - pa[0]) * u, pa[1] + (pb[1] - pa[1]) * u)
+
+            spine_ang = math.atan2(pb[1] - pa[1], pb[0] - pa[0])
+            side_sign = -1.0 if (i % 2 == 0) else 1.0
+            branch_ang = spine_ang + side_sign * s_rng.uniform(0.68, 1.32) + s_rng.uniform(-0.18, 0.18)
+            branch_len = min(s.radius * 0.65, s_rng.uniform(180.0, 390.0 if s.kind != "farm" else 140.0))
+
+            b_perp_x, b_perp_y = -math.sin(branch_ang), math.cos(branch_ang)
+            b_bend = s_rng.uniform(-35.0, 35.0)
+            bm = (
+                root[0] + math.cos(branch_ang) * (branch_len * 0.5) + b_perp_x * b_bend,
+                root[1] + math.sin(branch_ang) * (branch_len * 0.5) + b_perp_y * b_bend,
+            )
+            bend_pt = (
+                root[0] + math.cos(branch_ang) * branch_len,
+                root[1] + math.sin(branch_ang) * branch_len,
+            )
+            b_style = "Dirt" if s.kind in ("village", "farm") or i >= 3 else road_style
+            segments.append((root, bm, side_w, b_style))
+            segments.append((bm, bend_pt, max(8.0, side_w * 0.85), "Dirt"))
+
+            if s.kind in ("city", "town") and i < 3 and s_rng.random() < 0.6:
+                sub_ang = branch_ang + s_rng.uniform(-0.8, 0.8)
+                sub_len = s_rng.uniform(100.0, 200.0)
+                sub_end = (
+                    bm[0] + math.cos(sub_ang) * sub_len,
+                    bm[1] + math.sin(sub_ang) * sub_len,
+                )
+                segments.append((bm, sub_end, 8.5, "Dirt"))
+
+        return segments
+
+    def plan_chunk(self, cx: int, cy: int) -> List[dict]:
+        """Generate a main-street-led organic town layout with every building placed next to a road."""
+        ch = float(self.CHUNK_FT)
+        x0, y0 = cx * ch, cy * ch
+        x1, y1 = x0 + ch, y0 + ch
+        chunk_cx, chunk_cy = x0 + ch * 0.5, y0 + ch * 0.5
+        rng = random.Random(mix(self.seed, cx, cy, 9001))
+
+        specs: List[dict] = []
+        town_streets: List[Tuple[Tuple[float, float], Tuple[float, float], float]] = []
+        chunk_road_fronts: List[Tuple[float, float, float, float, float, Settlement]] = []
+
+        nearby_settlements = [
+            s
+            for s in self.all_settlements()
+            if math.hypot(s.x - chunk_cx, s.y - chunk_cy) <= s.radius + ch * 1.6
+        ]
+
+        for s in nearby_settlements:
+            for a, b, w_seg, st_seg in self._settlement_road_network(s):
+                if self._segment_intersects_rect(a[0], a[1], b[0], b[1], x0, y0, x1, y1):
+                    town_streets.append((a, b, w_seg))
+                    chunk_road_fronts.append((a[0], a[1], b[0], b[1], w_seg, s))
+                    specs.append(
+                        {
+                            "t": "road",
+                            "pts": [a, b],
+                            "width": w_seg,
+                            "style": st_seg,
+                        }
+                    )
+
+        road_segs = self._collect_road_segments(x0, y0, x1, y1, town_streets)
+        placed_buildings: List[dict] = []
+
+        # Place buildings strictly alongside roads in this chunk
+        if self.include_buildings and chunk_road_fronts:
+            slots_per_seg = 2 + self.density
+            for ax, ay, bx, by, r_w, anchor in chunk_road_fronts:
+                seg_dx, seg_dy = bx - ax, by - ay
+                seg_len = math.hypot(seg_dx, seg_dy)
+                if seg_len < 12.0:
+                    continue
+                ux, uy = seg_dx / seg_len, seg_dy / seg_len
+                # Normal vectors on both sides of the road
+                normals = [(-uy, ux), (uy, -ux)]
+                road_deg = math.degrees(math.atan2(seg_dy, seg_dx))
+
+                for _ in range(slots_per_seg):
+                    t_pos = rng.uniform(0.15, 0.85)
+                    fx = ax + seg_dx * t_pos
+                    fy = ay + seg_dy * t_pos
+                    nx, ny = rng.choice(normals)
+
+                    dist_from_center = math.hypot(fx - anchor.x, fy - anchor.y)
+                    angle_to_pt = math.atan2(fy - anchor.y, fx - anchor.x)
+                    lobe_scale = 0.85 + 0.22 * math.sin(angle_to_pt * 3.0 + anchor.uid)
+                    if dist_from_center > anchor.radius * lobe_scale:
                         continue
-                    if zf.get("cars") and r < 0.045 * dz:
-                        lane = rng.choice((-1, 1)) * width * 0.25
-                        wreck = rng.random() < 0.3
-                        ang = math.degrees(math.atan2(uy, ux)) + rng.choice((0, 180))
-                        specs.append({"t": "prop", "kind": veh_bad if wreck else veh_ok, "x": x - uy * lane, "y": y + ux * lane,
-                                      "rot": ang + (rng.uniform(-40, 40) if wreck else rng.uniform(-5, 5))})
-                    elif zf.get("zombies") and r < 0.06 * dz:
-                        self._enemy(specs, [], rng, x - 40, y - 40, x + 40, y + 40)
 
-    # ------------------------------------------------------------------ saving
-    def to_dict(self):
-        return {"seed": self.seed, "layout": self.layout, "genre": self.genre,
-                "width_mi": self.W / MILE, "height_mi": self.H / MILE,
-                "density": self.density, "zombies": self.zombies, "done": sorted([list(k) for k in self.done])}
+                    kind, bw, bh = self._pick_zoned_building(rng, anchor.kind, dist_from_center, anchor.radius)
+                    # Sit right next to the road edge with a small lot setback
+                    lot_offset = (r_w * 0.5) + (bh * 0.5) + rng.uniform(5.0, 14.0)
+                    bx_lot = fx + nx * lot_offset + rng.uniform(-6.0, 6.0)
+                    by_lot = fy + ny * lot_offset + rng.uniform(-6.0, 6.0)
 
-    @classmethod
-    def from_dict(cls, d):
-        w = cls(d["seed"], d["layout"], d["width_mi"], d["height_mi"], d["density"],
-                d.get("zombies"), d.get("genre", "apocalypse"))
-        w.done = {tuple(k) for k in d.get("done", [])}
-        return w
+                    if not (x0 + 8.0 <= bx_lot <= x1 - 8.0 and y0 + 8.0 <= by_lot <= y1 - 8.0):
+                        continue
+                    if self.is_water(bx_lot, by_lot):
+                        continue
+                    if not self._is_clear_of_roads(bx_lot, by_lot, bw, bh, road_segs, setback=4.0):
+                        continue
+                    if any(math.hypot(b["x"] - bx_lot, b["y"] - by_lot) < 28.0 for b in placed_buildings):
+                        continue
 
+                    b_spec = {
+                        "t": "building",
+                        "kind": kind,
+                        "x": bx_lot,
+                        "y": by_lot,
+                        "w": bw,
+                        "h": bh,
+                        "angle": round(road_deg + rng.uniform(-8.0, 8.0), 1),
+                    }
+                    placed_buildings.append(b_spec)
+                    specs.append(b_spec)
 
-# ----------------------------------------------------------------------------- procedural building interiors
-def generate_building_interior(x_ft, y_ft, w_ft, h_ft, kind="House", seed=1, genre="fantasy"):
-    """Generate interior partition walls, an interactive entry door, furniture props, and optional encounters
-    inside a building footprint (all coordinates in feet)."""
-    rng = random.Random(mix(int(seed), round(x_ft), round(y_ft), round(w_ft), round(h_ft)))
-    specs = []
-    # Leave a 2 ft wall inset around perimeter
-    ix0, iy0 = x_ft + 2.0, y_ft + 2.0
-    ix1, iy1 = x_ft + w_ft - 2.0, y_ft + h_ft - 2.0
-    iw, ih = ix1 - ix0, iy1 - iy0
-    if iw < 12 or ih < 12:
+        # Surrounding yard/lot & wild terrain props
+        prop_count = 4 + self.density * 3
+        for _ in range(prop_count):
+            px = rng.uniform(x0 + 10.0, x1 - 10.0)
+            py = rng.uniform(y0 + 10.0, y1 - 10.0)
+            if self.is_water(px, py):
+                continue
+            if any(math.hypot(b["x"] - px, b["y"] - py) < 15.0 for b in placed_buildings):
+                continue
+            biome = self.biome_at(px, py)
+            kind = "tree" if biome in ("Forest", "Grassland", "Marsh") else "rock"
+            specs.append(
+                {
+                    "t": "prop",
+                    "kind": kind,
+                    "x": px,
+                    "y": py,
+                    "w": 10.0,
+                    "h": 10.0,
+                    "rot": 0,
+                }
+            )
+
         return specs
 
-    # Entry door on bottom wall (starts closed so players see through windows until opened)
-    door_w = 5.0
-    dx = x_ft + w_ft / 2.0 - door_w / 2.0
-    specs.append({"t": "doorwall", "kind": "door", "pts": [(dx, y_ft + h_ft), (dx + door_w, y_ft + h_ft)],
-                  "is_door": True, "is_open": False})
+    @staticmethod
+    def _segment_intersects_rect(
+        ax: float,
+        ay: float,
+        bx: float,
+        by: float,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+    ) -> bool:
+        if max(ax, bx) < x0 or min(ax, bx) > x1 or max(ay, by) < y0 or min(ay, by) > y1:
+            return False
+        if (x0 <= ax <= x1 and y0 <= ay <= y1) or (x0 <= bx <= x1 and y0 <= by <= y1):
+            return True
+        cx, cy = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+        half_r = math.hypot(x1 - x0, y1 - y0) * 0.5
+        return _dist_point_to_segment(cx, cy, ax, ay, bx, by) <= half_r
 
-    # Front windows flanking the entry door so players outside can peek inside
-    if w_ft >= 25.0:
-        win_w = 5.0
-        specs.append({"t": "doorwall", "kind": "window",
-                      "pts": [(x_ft + 4.0, y_ft + h_ft), (x_ft + 4.0 + win_w, y_ft + h_ft)],
-                      "is_open": False})
-        specs.append({"t": "doorwall", "kind": "window",
-                      "pts": [(x_ft + w_ft - 4.0 - win_w, y_ft + h_ft), (x_ft + w_ft - 4.0, y_ft + h_ft)],
-                      "is_open": False})
+    def _pick_zoned_building(
+        self,
+        rng: random.Random,
+        settlement_kind: str,
+        dist: float,
+        radius: float,
+    ) -> Tuple[str, float, float]:
+        ratio = dist / max(1.0, radius)
+        if self.genre == "Contagion":
+            if settlement_kind == "farm":
+                if ratio < 0.5 and rng.random() < 0.65:
+                    return ("barn", rng.uniform(28.0, 42.0), rng.uniform(22.0, 32.0))
+                return ("house", rng.uniform(20.0, 28.0), rng.uniform(18.0, 24.0))
+            if ratio < 0.35:
+                civic_pool = ["market", "clinic", "police", "fire_station", "warehouse"]
+                if settlement_kind == "village":
+                    civic_pool = ["market", "clinic", "house"]
+                kind = rng.choice(civic_pool)
+                if kind in ("warehouse", "fire_station", "market"):
+                    return (kind, rng.uniform(32.0, 46.0), rng.uniform(24.0, 36.0))
+                return (kind, rng.uniform(24.0, 34.0), rng.uniform(20.0, 28.0))
+            if ratio < 0.72:
+                kind = rng.choice(["duplex", "house", "house", "warehouse"])
+                if kind == "warehouse":
+                    return (kind, rng.uniform(30.0, 42.0), rng.uniform(22.0, 32.0))
+                return (kind, rng.uniform(20.0, 30.0), rng.uniform(18.0, 26.0))
+            return (
+                rng.choice(["house", "barn"]),
+                rng.uniform(20.0, 32.0),
+                rng.uniform(18.0, 26.0),
+            )
 
-    # Optional interior room partition if building is large enough
-    if iw >= 28 and ih >= 22 and kind in ("House", "Inn", "Shop"):
-        split_x = round((x_ft + w_ft * rng.uniform(0.45, 0.62)) / 5.0) * 5.0
-        gap_y = round((y_ft + h_ft * 0.5) / 5.0) * 5.0
-        specs.append({"t": "doorwall", "kind": "wall", "pts": [(split_x, y_ft), (split_x, gap_y - 2.5)], "is_door": False})
-        specs.append({"t": "doorwall", "kind": "door", "pts": [(split_x, gap_y - 2.5), (split_x, gap_y + 2.5)],
-                      "is_door": True, "is_open": False})
-        specs.append({"t": "doorwall", "kind": "wall", "pts": [(split_x, gap_y + 2.5), (split_x, y_ft + h_ft)], "is_door": False})
-
-    # Populate furniture by building kind
-    if kind == "House":
-        # Bed in top-left corner, table in center-right, chest & hearth
-        specs.append({"t": "prop", "kind": "bed", "x": ix0 + 3.5, "y": iy0 + 4.5, "rot": 0})
-        specs.append({"t": "prop", "kind": "chest", "x": ix0 + 9.0, "y": iy0 + 2.5, "rot": 0})
-        specs.append({"t": "prop", "kind": "table", "x": ix1 - 7.5, "y": y_ft + h_ft / 2.0, "rot": 0})
-        specs.append({"t": "prop", "kind": "hearth", "x": x_ft + w_ft / 2.0, "y": iy0 + 2.2, "rot": 0})
-    elif kind == "Inn":
-        # Service counter along top, multiple dining tables, hearth
-        specs.append({"t": "prop", "kind": "counter", "x": x_ft + w_ft * 0.35, "y": iy0 + 5.0, "rot": 0})
-        specs.append({"t": "prop", "kind": "hearth", "x": ix1 - 4.5, "y": iy0 + 2.5, "rot": 0})
-        cols = max(1, int((iw - 10) // 14))
-        rows = max(1, int((ih - 14) // 11))
-        for r in range(rows):
-            for c in range(cols):
-                tx = ix0 + 7.0 + c * 14.0
-                ty = iy0 + 12.0 + r * 11.0
-                if tx < ix1 - 5 and ty < iy1 - 5:
-                    specs.append({"t": "prop", "kind": "table", "x": tx, "y": ty, "rot": 0})
-    elif kind == "Shop":
-        # Counter + shelving rows + crates
-        specs.append({"t": "prop", "kind": "counter", "x": x_ft + w_ft * 0.5, "y": iy0 + 6.0, "rot": 0})
-        for sx in (ix0 + 5.5, ix1 - 5.5):
-            if iw >= 24:
-                specs.append({"t": "prop", "kind": "shelf", "x": sx, "y": y_ft + h_ft * 0.55, "rot": 90})
-        specs.append({"t": "prop", "kind": "crate", "x": ix0 + 4.0, "y": iy1 - 4.0, "rot": rng.uniform(0, 30)})
-        specs.append({"t": "prop", "kind": "chest", "x": ix1 - 4.5, "y": iy0 + 3.0, "rot": 0})
-    elif kind == "Barn":
-        # Crates, rubble/hay, wagon
-        specs.append({"t": "prop", "kind": "wagon", "x": x_ft + w_ft * 0.5, "y": y_ft + h_ft * 0.45, "rot": 0})
-        for _ in range(3):
-            specs.append({"t": "prop", "kind": "crate",
-                          "x": rng.uniform(ix0 + 3, ix1 - 3), "y": rng.uniform(iy0 + 3, iy1 - 3),
-                          "rot": rng.uniform(0, 90)})
-    elif kind == "Warehouse":
-        # Grid of crates + terminal/chest
-        step_x, step_y = 11.0, 10.0
-        cx = ix0 + 6.0
-        while cx < ix1 - 5.0:
-            cy = iy0 + 6.0
-            while cy < iy1 - 5.0:
-                if rng.random() < 0.72:
-                    specs.append({"t": "prop", "kind": "crate", "x": cx, "y": cy, "rot": rng.choice((0, 90))})
-                cy += step_y
-            cx += step_x
-        if genre == "scifi":
-            specs.append({"t": "prop", "kind": "terminal", "x": ix0 + 4.5, "y": iy0 + 3.0, "rot": 0})
-
-    return specs
-
-
-# ----------------------------------------------------------------------------- procedural dungeon generator
-def generate_dungeon(seed=1, rooms=10, room_min_ft=20, room_max_ft=45, genre="fantasy"):
-    """Generate a complete multi-room dungeon with corridors, doors, walls, props, and encounters (in feet)."""
-    rng = random.Random(mix(int(seed), int(rooms), 777))
-    g = GENRE_DATA.get(genre, GENRE_DATA["fantasy"])
-    specs = []
-    placed = []  # list of (x, y, w, h) in feet, snapped to 5 ft
-
-    def snap5(v):
-        return round(v / 5.0) * 5.0
-
-    for _ in range(rooms * 8):
-        if len(placed) >= rooms:
-            break
-        rw = snap5(rng.uniform(room_min_ft, room_max_ft))
-        rh = snap5(rng.uniform(room_min_ft, room_max_ft))
-        if not placed:
-            rx, ry = -rw / 2.0, -rh / 2.0
-        else:
-            px, py, pw, ph = rng.choice(placed)
-            angle = rng.uniform(0, 2 * math.pi)
-            dist = rng.uniform(55.0, 95.0)
-            rx = snap5(px + pw / 2.0 + math.cos(angle) * dist - rw / 2.0)
-            ry = snap5(py + ph / 2.0 + math.sin(angle) * dist - rh / 2.0)
-        # Check overlap with 15 ft buffer
-        if any(not (rx + rw + 15 <= ox or rx >= ox + ow + 15 or ry + rh + 15 <= oy or ry >= oy + oh + 15)
-               for ox, oy, ow, oh in placed):
-            continue
-        placed.append((rx, ry, rw, rh))
-
-    # Build L-shaped corridors between consecutive rooms (minimum spanning style)
-    corridors = []  # (x, y, w, h)
-    for i in range(1, len(placed)):
-        ax, ay, aw, ah = placed[i - 1]
-        bx, by, bw, bh = placed[i]
-        # Connect to closest already-placed room
-        best_j = min(range(i), key=lambda j: math.hypot((placed[j][0] + placed[j][2] / 2) - (bx + bw / 2),
-                                                         (placed[j][1] + placed[j][3] / 2) - (by + bh / 2)))
-        ax, ay, aw, ah = placed[best_j]
-        c1x, c1y = snap5(ax + aw / 2.0), snap5(ay + ah / 2.0)
-        c2x, c2y = snap5(bx + bw / 2.0), snap5(by + bh / 2.0)
-        cw = 10.0
-        # Horizontal leg then vertical leg
-        hx0, hx1 = min(c1x, c2x) - cw / 2.0, max(c1x, c2x) + cw / 2.0
-        corridors.append((hx0, c1y - cw / 2.0, hx1 - hx0, cw))
-        vy0, vy1 = min(c1y, c2y) - cw / 2.0, max(c1y, c2y) + cw / 2.0
-        corridors.append((c2x - cw / 2.0, vy0, cw, vy1 - vy0))
-
-    # Floor terrain rects for corridors and rooms
-    for cx, cy, cw, ch in corridors:
-        specs.append({"t": "terrain", "name": "Rock",
-                      "pts": [(cx, cy), (cx + cw, cy), (cx + cw, cy + ch), (cx, cy + ch), (cx, cy)]})
-    for rx, ry, rw, rh in placed:
-        specs.append({"t": "terrain", "name": "Rock",
-                      "pts": [(rx, ry), (rx + rw, ry), (rx + rw, ry + rh), (rx, ry + rh), (rx, ry)]})
-
-    # Perimeter vision-blocking walls around rooms, leaving openings where corridors enter (with interactive doors!)
-    def point_in_corridor(px, py):
-        for cx, cy, cw, ch in corridors:
-            if cx - 1.0 <= px <= cx + cw + 1.0 and cy - 1.0 <= py <= cy + ch + 1.0:
-                return True
-        return False
-
-    for idx, (rx, ry, rw, rh) in enumerate(placed):
-        # Walk each of the 4 edges in 5 ft segments
-        edges = [
-            [(rx + k * 5.0, ry, rx + (k + 1) * 5.0, ry) for k in range(int(rw // 5))],
-            [(rx + rw, ry + k * 5.0, rx + rw, ry + (k + 1) * 5.0) for k in range(int(rh // 5))],
-            [(rx + k * 5.0, ry + rh, rx + (k + 1) * 5.0, ry + rh) for k in range(int(rw // 5))],
-            [(rx, ry + k * 5.0, rx, ry + (k + 1) * 5.0) for k in range(int(rh // 5))],
-        ]
-        for segs in edges:
-            door_placed_on_edge = False
-            for x1, y1, x2, y2 in segs:
-                mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-                if point_in_corridor(mx, my):
-                    if not door_placed_on_edge:
-                        specs.append({"t": "doorwall", "pts": [(x1, y1), (x2, y2)],
-                                      "is_door": True, "is_open": False})
-                        door_placed_on_edge = True
-                else:
-                    specs.append({"t": "doorwall", "pts": [(x1, y1), (x2, y2)],
-                                  "is_door": False, "is_open": False})
-
-        # Room dressing & encounters (Room 0 is safe entrance)
-        if idx == 0:
-            specs.append({"t": "prop", "kind": "brazier", "x": rx + 4.0, "y": ry + 4.0, "rot": 0})
-            specs.append({"t": "prop", "kind": "brazier", "x": rx + rw - 4.0, "y": ry + 4.0, "rot": 0})
-            continue
-
-        theme = rng.choice(["shrine", "barracks", "crypt", "armory", "chamber"])
-        if theme == "shrine":
-            specs.append({"t": "prop", "kind": "altar", "x": rx + rw / 2.0, "y": ry + rh / 2.0, "rot": 0})
-            specs.append({"t": "prop", "kind": "brazier", "x": rx + 5.0, "y": ry + 5.0, "rot": 0})
-            specs.append({"t": "prop", "kind": "brazier", "x": rx + rw - 5.0, "y": ry + rh - 5.0, "rot": 0})
-        elif theme == "barracks":
-            specs.append({"t": "prop", "kind": "table", "x": rx + rw / 2.0, "y": ry + rh / 2.0, "rot": 0})
-            specs.append({"t": "prop", "kind": "bed", "x": rx + 4.5, "y": ry + 5.0, "rot": 0})
-            specs.append({"t": "prop", "kind": "bed", "x": rx + rw - 4.5, "y": ry + 5.0, "rot": 0})
-        elif theme == "armory":
-            specs.append({"t": "prop", "kind": "crate", "x": rx + 5.0, "y": ry + 5.0, "rot": 0})
-            specs.append({"t": "prop", "kind": "crate", "x": rx + 11.0, "y": ry + 5.0, "rot": 15})
-            specs.append({"t": "prop", "kind": "chest", "x": rx + rw - 5.0, "y": ry + rh - 4.5, "rot": 0})
-        elif theme == "crypt":
-            specs.append({"t": "prop", "kind": "chest", "x": rx + rw / 2.0, "y": ry + rh / 2.0, "rot": 0})
-            if rw >= 30 and rh >= 30:
-                for px in (rx + 8.0, rx + rw - 8.0):
-                    for py in (ry + 8.0, ry + rh - 8.0):
-                        specs.append({"t": "prop", "kind": "pillar", "x": px, "y": py, "rot": 0})
-        else:
-            specs.append({"t": "prop", "kind": "rubble", "x": rx + rw * 0.35, "y": ry + rh * 0.6, "rot": rng.uniform(0, 360)})
-
-        # Spawn 1-3 enemies inside non-entrance rooms
-        enemy_table = g["enemies"]
-        for _ in range(rng.randint(1, 3)):
-            ex = snap5(rx + rng.uniform(6.0, max(7.0, rw - 6.0)))
-            ey = snap5(ry + rng.uniform(6.0, max(7.0, rh - 6.0)))
-            r, acc, ekind = rng.random(), 0.0, enemy_table[-1][0]
-            for ename, wgt in enemy_table:
-                acc += wgt
-                if r < acc:
-                    ekind = ename
-                    break
-            specs.append({"t": "token", "kind": ekind, "x": ex, "y": ey})
-
-    # Corridor perimeter walls
-    def point_in_any_area(px, py):
-        for rx, ry, rw, rh in placed:
-            if rx - 0.5 <= px <= rx + rw + 0.5 and ry - 0.5 <= py <= ry + rh + 0.5:
-                return True
-        for cx, cy, cw, ch in corridors:
-            if cx - 0.5 <= px <= cx + cw + 0.5 and cy - 0.5 <= py <= cy + ch + 0.5:
-                return True
-        return False
-
-    for cx, cy, cw, ch in corridors:
-        edges = [
-            [(cx + k * 5.0, cy, cx + (k + 1) * 5.0, cy) for k in range(int(cw // 5))],
-            [(cx + cw, cy + k * 5.0, cx + cw, cy + (k + 1) * 5.0) for k in range(int(ch // 5))],
-            [(cx + k * 5.0, cy + ch, cx + (k + 1) * 5.0, cy + ch) for k in range(int(cw // 5))],
-            [(cx, cy + k * 5.0, cx, cy + (k + 1) * 5.0) for k in range(int(ch // 5))],
-        ]
-        for segs in edges:
-            for x1, y1, x2, y2 in segs:
-                mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-                nx, ny = -(y2 - y1) * 0.4, (x2 - x1) * 0.4
-                if not (point_in_any_area(mx + nx, my + ny) and point_in_any_area(mx - nx, my - ny)):
-                    specs.append({"t": "doorwall", "pts": [(x1, y1), (x2, y2)], "is_door": False, "is_open": False})
-
-    start_room = placed[0] if placed else (-15, -15, 30, 30)
-    return specs, (start_room[0] + start_room[2] / 2.0, start_room[1] + start_room[3] / 2.0)
+        b_kinds = GENRE_DATA[self.genre]["building_kinds"]
+        return (rng.choice(b_kinds), rng.uniform(20.0, 34.0), rng.uniform(18.0, 28.0))
+World = WorldGen

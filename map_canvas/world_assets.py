@@ -199,35 +199,149 @@ def world_path(pts):
     return path
 
 
+_BIOME_ALIASES = {
+    "Grassland": "Grass",
+}
+
+
 def world_palette():
-    if worldgen is None:
-        return []
-    return [QColor(TERRAIN[n]).getRgb()[:3] for n in worldgen.BIOMES]
+    out = []
+    for n in worldgen.BIOMES:
+        key = _BIOME_ALIASES.get(n, n)
+        col = QColor(TERRAIN.get(key, "#888888"))
+        out.append(col.getRgb()[:3])
+    return out
+def _sample_world_cell(w, fx, fy):
+    if hasattr(w, "biome_at"):
+        b = w.biome_at(fx, fy)
+    elif hasattr(w, "biome_name_at"):
+        b = w.biome_name_at(fx, fy)
+    else:
+        b = None
+
+    if hasattr(w, "elevation_at"):
+        h = w.elevation_at(fx, fy)
+    elif hasattr(w, "height_at"):
+        h = w.height_at(fx, fy)
+    else:
+        h = 0.5
+    return b, h
+
+
+_TERRAIN_DEBUG_PRINTED = False
 
 
 def render_terrain(w, vr, z, nx, ny, B):
-    pal = world_palette()
-    step = B / (z * UNITS_PER_FT)
-    x0, y0 = vr.left() / UNITS_PER_FT, vr.top() / UNITS_PER_FT
-    buf = bytearray(nx * ny * 4)
-    terrain, biome = w.terrain, w.biome
-    for j in range(ny):
-        y = y0 + (j + 0.5) * step
-        for i in range(nx):
-            x = x0 + (i + 0.5) * step
-            e, m = terrain(x, y)
-            r, g, b = pal[biome(e, m, x, y)]
-            shade = 0.80 + 0.5 * e
-            k = (j * nx + i) * 4
-            buf[k], buf[k + 1], buf[k + 2], buf[k + 3] = min(255, int(b * shade)), min(255, int(g * shade)), min(255, int(r * shade)), 255
-    return QImage(bytes(buf), nx, ny, nx * 4, QImage.Format_RGB32).copy()
+    if nx <= 0 or ny <= 0 or w is None or z == 0:
+        return None
 
+    fmt = getattr(QImage, "Format_RGB32", None) or QImage.Format.Format_RGB32
+    img = QImage(nx, ny, fmt)
+    bg_col = QColor(28, 32, 38)
+    img.fill(bg_col)
+
+    has_elev = hasattr(w, "elevation") and callable(w.elevation)
+    seed = int(getattr(w, "seed", 1337))
+    water_threshold = -0.52
+
+    water_palette = [
+        QColor(max(0, 32 - i * 3), max(0, 72 - i * 5), max(0, 114 - i * 6))
+        for i in range(8)
+    ]
+    land_palette = []
+    for i in range(32):
+        t = i / 31.0
+        if t < 0.35:
+            u = t / 0.35
+            land_palette.append(QColor(int(52 + u * 20), int(74 + u * 22), int(48 + u * 10)))
+        elif t < 0.75:
+            u = (t - 0.35) / 0.40
+            land_palette.append(QColor(int(72 + u * 40), int(96 + u * 18), int(58 + u * 20)))
+        else:
+            u = (t - 0.75) / 0.25
+            land_palette.append(QColor(int(112 + u * 36), int(114 + u * 34), int(108 + u * 36)))
+
+    inv_z_ft = 1.0 / (z * UNITS_PER_FT)
+    left_ft = vr.left() / UNITS_PER_FT
+    top_ft = vr.top() / UNITS_PER_FT
+
+    for py in range(ny):
+        fy = top_ft + (py + 0.5) * B * inv_z_ft
+        for px in range(nx):
+            fx = left_ft + (px + 0.5) * B * inv_z_ft
+
+            elev = float(w.elevation(fx, fy)) if has_elev else 0.0
+            grain = (_hash2(px, py, seed) - 0.5) * 0.14
+
+            if elev + grain * 0.35 < water_threshold:
+                depth = max(0.0, min(0.999, (water_threshold - elev) / 0.85))
+                col = water_palette[int(depth * len(water_palette))]
+            else:
+                t = max(0.0, min(0.999, (elev - water_threshold + grain) / 1.85))
+                col = land_palette[int(t * len(land_palette))]
+
+            img.setPixelColor(px, py, col)
+
+    return img
+
+def _hash2(a, b, seed=0):
+    n = (int(a) * 374761393 + int(b) * 668265263 + int(seed) * 1442695041) & 0xFFFFFFFF
+    n = ((n ^ (n >> 13)) * 1274126177) & 0xFFFFFFFF
+    n = (n ^ (n >> 16)) & 0xFFFFFFFF
+    return n / 4294967296.0
+
+def _biome_dot_odds_map():
+    biomes = getattr(worldgen, "BIOMES", None) or []
+    base_odds = {
+        "Forest": 0.80,
+        "Scrub": 0.30,
+        "Grass": 0.14,
+        "Grassland": 0.14,
+        "Farmland": 0.30,
+        "Farm": 0.30,
+        "Water": 0.10,
+        "Rock": 0.35,
+        "Snow": 0.08,
+        "Sand": 0.12,
+    }
+    odds_by_id = {}
+    odds_by_name = dict(base_odds)
+    for idx, bname in enumerate(biomes):
+        for k, v in base_odds.items():
+            if str(bname).lower() == k.lower():
+                odds_by_id[idx] = v
+                odds_by_name[bname] = v
+    return odds_by_id, odds_by_name
+
+
+def _dot_odds_for_biome(b, odds_by_id, odds_by_name):
+    if isinstance(b, int):
+        return odds_by_id.get(b, 0.0)
+    if isinstance(b, str):
+        return odds_by_name.get(b, odds_by_name.get(b.capitalize(), 0.0))
+    return 0.0
+
+def _sample_w_terrain_biome(w, x, y):
+    if hasattr(w, "terrain") and callable(w.terrain):
+        e, m = w.terrain(x, y)
+    elif hasattr(w, "terrain_at") and callable(w.terrain_at):
+        e, m = w.terrain_at(x, y)
+    else:
+        e = w.elevation_at(x, y) if hasattr(w, "elevation_at") and callable(w.elevation_at) else 0.5
+        m = w.moisture_at(x, y) if hasattr(w, "moisture_at") and callable(w.moisture_at) else 0.5
+
+    if hasattr(w, "biome") and callable(w.biome):
+        b = w.biome(e, m, x, y)
+    elif hasattr(w, "biome_at") and callable(w.biome_at):
+        b = w.biome_at(x, y)
+    else:
+        b = "Grass"
+    return e, m, b
 
 def render_dots(w, vr, z):
     if worldgen is None or z < 0.0005:
         return {}
-    DOT_ODDS = {worldgen.FOREST: 0.80, worldgen.SCRUB: 0.30, worldgen.GRASS: 0.14, worldgen.FARM: 0.30,
-                worldgen.WATER: 0.10, worldgen.ROCK: 0.35, worldgen.SNOW: 0.08, worldgen.SAND: 0.12}
+    odds_by_id, odds_by_name = _biome_dot_odds_map()
     cell = 2 ** math.ceil(math.log2(40 / (z * UNITS_PER_FT)))
     fx0, fy0 = vr.left() / UNITS_PER_FT, vr.top() / UNITS_PER_FT
     i0, i1 = math.floor(fx0 / cell), math.floor(vr.right() / UNITS_PER_FT / cell)
@@ -237,35 +351,63 @@ def render_dots(w, vr, z):
     seed, ppf, out = w.seed, z * UNITS_PER_FT, {}
     for j in range(j0, j1 + 1):
         for i in range(i0, i1 + 1):
-            r1, r2 = worldgen.hash2(i, j, seed + 31), worldgen.hash2(j, i, seed + 57)
+            r1, r2 = _hash2(i, j, seed + 31), _hash2(j, i, seed + 57)
             x, y = (i + r1) * cell, (j + r2) * cell
-            e, m = w.terrain(x, y)
-            b = w.biome(e, m, x, y)
-            if worldgen.hash2(i * 7 + 1, j * 13 + 5, seed + 77) <= DOT_ODDS[b]:
+            _, _, b = _sample_w_terrain_biome(w, x, y)
+            odd = _dot_odds_for_biome(b, odds_by_id, odds_by_name)
+            if odd > 0 and _hash2(i * 7 + 1, j * 13 + 5, seed + 77) <= odd:
                 out.setdefault(b, []).append(((x - fx0) * ppf, (y - fy0) * ppf, 0.6 + 0.8 * r1))
     return out
 
+def _biome_dot_style_map():
+    base_styles = {
+        "Forest": ((30, 84, 46, 215), 6, 7, False),
+        "Scrub": ((142, 122, 70, 200), 2.5, 2, False),
+        "Grass": ((92, 148, 68, 170), 2.0, 1.5, False),
+        "Grassland": ((92, 148, 68, 170), 2.0, 1.5, False),
+        "Farmland": ((186, 158, 72, 185), 2.5, 2, False),
+        "Farm": ((186, 158, 72, 185), 2.5, 2, False),
+        "Water": ((65, 130, 195, 175), 2.0, 1.5, False),
+        "Rock": ((125, 130, 140, 210), 4.0, 3.5, True),
+        "Snow": ((230, 238, 248, 200), 3.0, 2.5, False),
+        "Sand": ((214, 192, 122, 185), 2.5, 2, False),
+    }
+    by_id = {}
+    by_name = dict(base_styles)
+    biomes = getattr(worldgen, "BIOMES", None) or []
+    for idx, bname in enumerate(biomes):
+        for k, style in base_styles.items():
+            if str(bname).lower() == k.lower():
+                by_id[idx] = style
+                by_name[bname] = style
+    return by_id, by_name
+
+
+def _dot_style_for_key(key, by_id, by_name):
+    if isinstance(key, int):
+        return by_id.get(key)
+    if isinstance(key, str):
+        return by_name.get(key, by_name.get(key.capitalize()))
+    return None
+
 
 def draw_dots(p, dots):
-    if worldgen is None:
+    if not dots:
         return
-    DOT_STYLE = {worldgen.FOREST: ((30, 84, 46, 215), 6, 7, False), worldgen.SCRUB: ((142, 122, 70, 200), 2.5, 2, False),
-                 worldgen.GRASS: ((96, 150, 70, 190), 1.5, 1.5, False), worldgen.FARM: ((170, 146, 66, 210), 6, 6, True),
-                 worldgen.WATER: ((255, 255, 255, 120), 4, 4, True), worldgen.ROCK: ((105, 105, 110, 210), 2.5, 3, False),
-                 worldgen.SNOW: ((205, 220, 240, 220), 1.5, 2, False), worldgen.SAND: ((196, 172, 120, 200), 1.2, 1.2, False)}
-    for b, lst in dots.items():
-        color, base, scale, dash = DOT_STYLE[b]
-        if dash:
-            p.setPen(QPen(QColor(*color), 1.6))
-            for x, y, sz in lst:
-                r = base + scale * sz * 0.5
-                p.drawLine(QPointF(x - r, y), QPointF(x + r, y))
-        else:
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(*color))
-            for x, y, sz in lst:
-                r = base + scale * sz
-                p.drawEllipse(QPointF(x, y), r, r)
+    by_id, by_name = _biome_dot_style_map()
+    for b_key, pts in dots.items():
+        style = _dot_style_for_key(b_key, by_id, by_name)
+        if style is None:
+            continue
+        rgba, r_base, r_scale, is_rect = style
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(*rgba))
+        for sx, sy, mult in pts:
+            rad = max(1.5, r_base + r_scale * (mult - 0.6))
+            if is_rect:
+                p.drawRect(QRectF(sx - rad, sy - rad, rad * 2, rad * 2))
+            else:
+                p.drawEllipse(QPointF(sx, sy), rad, rad)
 
 
 ROAD_LOOK = {"highway": ("#4b5160", "#8a90a0", 2.6), "county": ("#6b6455", "#b8b09a", 1.5), "spur": ("#6b6455", "#c2b79c", 1.1)}
@@ -274,60 +416,111 @@ SYMBOL_COLOR = {"city": "#374151", "town": "#4b5563", "village": "#6b7280", "far
 
 
 def draw_world(view, p, rect):
-    w = Atlas.current
+    w = getattr(Atlas, "current", None)
     if w is None or worldgen is None:
         return
     z = view.transform().m11()
     vp = view.viewport()
     W, H = vp.width(), vp.height()
-    if W <= 0 or H <= 0:
+    if W <= 0 or H <= 0 or z == 0:
         return
+
     vr = view.mapToScene(vp.rect()).boundingRect()
+    fx0, fy0 = vr.left() / UNITS_PER_FT, vr.top() / UNITS_PER_FT
+    fx1, fy1 = vr.right() / UNITS_PER_FT, vr.bottom() / UNITS_PER_FT
+
     B = 28
-    nx, ny = -(-W // B), -(-H // B)
-    key = (round(vr.left(), 2), round(vr.top(), 2), z, W, H, id(w))
+    nx, ny = max(1, -(-W // B)), max(1, -(-H // B))
+    key = (round(vr.left(), 2), round(vr.top(), 2), round(z, 6), W, H, id(w))
     cache = getattr(view, "_world_cache", None)
     if cache is None or cache[0] != key:
         cache = (key, render_terrain(w, vr, z, nx, ny, B), render_dots(w, vr, z))
         view._world_cache = cache
-    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-    p.drawImage(QRectF(vr.left(), vr.top(), nx * B / z, ny * B / z), cache[1])
-    p.save()
-    p.resetTransform()
-    draw_dots(p, cache[2])
-    p.restore()
-    fx0, fy0 = vr.left() / UNITS_PER_FT, vr.top() / UNITS_PER_FT
-    fx1, fy1 = vr.right() / UNITS_PER_FT, vr.bottom() / UNITS_PER_FT
+
+    terrain_img, dots_data = cache[1], cache[2]
+    if terrain_img is not None and not terrain_img.isNull():
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.drawImage(QRectF(vr.left(), vr.top(), nx * B / z, ny * B / z), terrain_img)
+
+    if dots_data:
+        p.save()
+        p.resetTransform()
+        draw_dots(p, dots_data)
+        p.restore()
+
     p.setBrush(Qt.NoBrush)
-    for rv in w.rivers:
-        if worldgen.overlaps(rv["bbox"], fx0, fy0, fx1, fy1):
-            p.setPen(QPen(QColor("#4f93c9"), max(rv["width"] * UNITS_PER_FT, 2.4 / z), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-            p.drawPath(world_path(rv["pts"]))
-    for road in w.roads_in_rect(fx0, fy0, fx1, fy1, z > 0.0003):
-        casing, fill, minpx = ROAD_LOOK[road["kind"]]
-        wd, path = road["width"] * UNITS_PER_FT, world_path(road["pts"])
-        p.setPen(QPen(QColor(casing), max(wd * 1.25, (minpx + 1.6) / z), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        p.drawPath(path)
-        p.setPen(QPen(QColor(fill), max(wd, minpx / z), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        p.drawPath(path)
-    if z < DETAIL_ZOOM:
+
+    rivers = getattr(w, "rivers", None) or []
+    for rv in rivers:
+        bbox = rv.get("bbox") if isinstance(rv, dict) else getattr(rv, "bbox", None)
+        pts = rv.get("pts") if isinstance(rv, dict) else getattr(rv, "pts", None)
+        width = rv.get("width", 2.0) if isinstance(rv, dict) else getattr(rv, "width", 2.0)
+        if not pts:
+            continue
+        if bbox is None or not hasattr(worldgen, "overlaps") or worldgen.overlaps(bbox, fx0, fy0, fx1, fy1):
+            p.setPen(QPen(QColor("#4f93c9"), max(width * UNITS_PER_FT, 2.4 / z), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPath(world_path(pts))
+
+    roads_fn = getattr(w, "roads_in_rect", None)
+    if callable(roads_fn) and "ROAD_LOOK" in globals() and ROAD_LOOK:
+        style_aliases = {
+            "asphalt": "paved",
+            "highway": "paved",
+        }
+        lower_look = {str(k).lower(): v for k, v in ROAD_LOOK.items()}
+        fallback_look = (
+            lower_look.get("paved")
+            or lower_look.get("road")
+            or lower_look.get("dirt")
+            or next(iter(ROAD_LOOK.values()))
+        )
+        for road in roads_fn(fx0, fy0, fx1, fy1):
+            if isinstance(road, dict):
+                raw_style = road.get("style") or road.get("kind") or road.get("type")
+                pts = road.get("pts") or road.get("points")
+                width = road.get("width", 26.0)
+            else:
+                raw_style = (
+                    getattr(road, "style", None)
+                    or getattr(road, "kind", None)
+                    or getattr(road, "type", None)
+                )
+                pts = getattr(road, "pts", None) or getattr(road, "points", None)
+                width = getattr(road, "width", 26.0)
+
+            if not pts or len(pts) < 2:
+                continue
+
+            s_key = str(raw_style or "").lower()
+            s_key = style_aliases.get(s_key, s_key)
+            casing, fill, minpx = lower_look.get(s_key, fallback_look)
+
+            wd, path = float(width) * UNITS_PER_FT, world_path(pts)
+            p.setPen(QPen(QColor(casing), max(wd * 1.25, (minpx + 1.6) / z), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPath(path)
+            p.setPen(QPen(QColor(fill), max(wd, minpx / z), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPath(path)
+
+    settlements_fn = getattr(w, "settlements_in_rect", None)
+    if z < DETAIL_ZOOM and callable(settlements_fn):
         p.save()
         p.resetTransform()
         font = QFont()
         font.setBold(True)
         font.setPixelSize(12)
         p.setFont(font)
-        for st in w.settlements_in_rect(fx0, fy0, fx1, fy1):
+        for st in settlements_fn(fx0, fy0, fx1, fy1):
             if (st.kind == "village" and z < 5e-4) or (st.kind == "farm" and z < 4e-3) or (st.kind == "town" and z < 8e-5):
                 continue
             sx, sy = (st.x * UNITS_PER_FT - vr.left()) * z, (st.y * UNITS_PER_FT - vr.top()) * z
-            base, true_r = SYMBOL_PX[st.kind], st.radius * UNITS_PER_FT * z
+            base = SYMBOL_PX.get(st.kind, 4)
+            true_r = st.radius * UNITS_PER_FT * z
             if true_r > base:
                 p.setPen(Qt.NoPen)
                 p.setBrush(QColor(70, 70, 80, 60))
                 p.drawEllipse(QPointF(sx, sy), true_r, true_r)
             p.setPen(QPen(QColor("#ffffff"), 1.2))
-            p.setBrush(QColor(SYMBOL_COLOR[st.kind]))
+            p.setBrush(QColor(SYMBOL_COLOR.get(st.kind, "#e5e7eb")))
             p.drawEllipse(QPointF(sx, sy), base, base)
             if (st.kind == "city" and z < 0.02) or (st.kind == "town" and 5e-4 < z < 0.02):
                 p.setPen(QColor(255, 255, 255, 230))
@@ -335,4 +528,3 @@ def draw_world(view, p, rect):
                 p.setPen(QColor("#1f2937"))
                 p.drawText(QPointF(sx + base + 4, sy - 5), st.name)
         p.restore()
-

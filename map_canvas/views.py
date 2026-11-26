@@ -49,13 +49,10 @@ class MapView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.setMouseTracking(True)
         self.set_tool("select")
-<<<<<<< HEAD
-=======
     def delete_selected(self):
         items = [i for i in self.scene().selectedItems() if not getattr(i, "locked", False)]
         if items:
             self.undo.push(RemoveCommand(self.scene(), items))
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
 
     def set_tool(self, t):
         self.tool = t
@@ -279,10 +276,7 @@ class MapView(QGraphicsView):
             menu.addSeparator()
             menu.addAction("Delete Token", lambda: self.undo.push(RemoveCommand(self.scene(), [it])))
             menu.exec(e.globalPos())
-<<<<<<< HEAD
-=======
             self._clear_sticky_pan()
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
             e.accept()
             return
         if isinstance(it, BuildingItem):
@@ -439,12 +433,9 @@ class MapView(QGraphicsView):
     def mouseMoveEvent(self, e):
         pos = e.position().toPoint()
         if self._pan is not None:
-<<<<<<< HEAD
-=======
             if not (e.buttons() & (Qt.MiddleButton | Qt.RightButton)) and not self._space:
                 self._clear_sticky_pan()
                 return
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
             d = pos - self._pan
             self._pan = pos
             h, v = self.horizontalScrollBar(), self.verticalScrollBar()
@@ -576,8 +567,6 @@ class MapView(QGraphicsView):
         elif t == "eraser" and self._erased:
             self.undo.push(RemoveCommand(self.scene(), self._erased))
             self._erased = []
-<<<<<<< HEAD
-=======
     def _clear_sticky_pan(self):
         self._pan = None
         self._pan_btn = None
@@ -589,7 +578,6 @@ class MapView(QGraphicsView):
     def focusOutEvent(self, e):
         self._clear_sticky_pan()
         super().focusOutEvent(e)
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
 
     def erase_at(self, sp):
         r = 10 / self.transform().m11()
@@ -615,14 +603,11 @@ class MapView(QGraphicsView):
         if items:
             self.undo.push(RemoveCommand(self.scene(), items))
 
-<<<<<<< HEAD
 
 # ----------------------------------------------------------------------------- player screen
-=======
 # ----------------------------------------------------------------------------- player screen
 
 
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
 class PlayerView(QGraphicsView):
     def __init__(self, scene, main):
         super().__init__(scene)

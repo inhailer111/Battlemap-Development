@@ -302,9 +302,28 @@ class PolyItem(PlayerSafe, Snappy, QGraphicsPathItem):
 
 class RoadItem(PolyItem):
     kind = "road"
+    _STYLE_ALIASES = {
+        "Asphalt": "Paved",
+    }
+
     def __init__(self, pts, style="Paved", width=20):
-        super().__init__(pts, style, width)
+        super().__init__(pts, self._resolve_style_name(style), width)
         self.setZValue(-5)
+
+    @classmethod
+    def _resolve_style_name(cls, style):
+        key = cls._STYLE_ALIASES.get(style, style)
+        if key in ROAD_STYLES:
+            return key
+        if "Paved" in ROAD_STYLES:
+            return "Paved"
+        return next(iter(ROAD_STYLES))
+
+    def _road_style(self):
+        resolved = self._resolve_style_name(self.style)
+        if resolved != self.style:
+            self.style = resolved
+        return ROAD_STYLES[resolved]
 
     def to_dict(self):
         d = super().to_dict()
@@ -312,29 +331,31 @@ class RoadItem(PolyItem):
         return d
 
     def style_pen(self):
-        self.setPen(QPen(QColor(ROAD_STYLES[self.style][0]), self.width * UNITS_PER_FT,
+        st = self._road_style()
+        self.setPen(QPen(QColor(st[0]), self.width * UNITS_PER_FT,
                          Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         self.setBrush(Qt.NoBrush)
 
     def paint(self, p, option, widget=None):
+        st = self._road_style()
         z = p.worldTransform().m11()
         p.setRenderHint(QPainter.Antialiasing)
         p.setBrush(Qt.NoBrush)
         w = max(self.width * UNITS_PER_FT, 3 / z)
-        p.setPen(QPen(QColor(ROAD_STYLES[self.style][0]), w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.setPen(QPen(QColor(st[0]), w, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.drawPath(self.path())
         if self.isSelected() and not (widget is not None and widget.property("player_view")):
             sel = QPen(QColor("#f59e0b"), 2, Qt.DashLine)
             sel.setCosmetic(True)
             p.setPen(sel)
             p.drawPath(self.shape())
-        if ROAD_STYLES[self.style][1] and self.width * UNITS_PER_FT * z >= 6:
+        if st[1] and self.width * UNITS_PER_FT * z >= 6:
             mid = QPen(QColor("#f3efe0"), 2, Qt.DashLine)
             mid.setCosmetic(True)
             p.setPen(mid)
             p.drawPath(self.path())
 
-
+            
 class FenceItem(PolyItem):
     kind = "fence"
     def __init__(self, pts, style="Wood", width=1):
@@ -490,8 +511,6 @@ class BuildingItem(Snappy, QGraphicsItem):
         base = QColor(BUILDING_KINDS.get(self.kind, "#888888"))
         p.setPen(Qt.NoPen)
         draw_interior = self.has_player_inside and not (on_tv and hidden_in_fog(self))
-<<<<<<< HEAD
-=======
         vis = _vision()
         local_vis = QPainterPath()
         if vis.fog_on and not vis.visible.isEmpty():
@@ -502,7 +521,6 @@ class BuildingItem(Snappy, QGraphicsItem):
             and local_vis.intersects(QRectF(2, 2, max(1.0, w - 4), max(1.0, h - 4)))
         )
         draw_interior = (self.has_player_inside or peering_in) and not (on_tv and hidden_in_fog(self))
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
         if draw_interior:
             floor_col = QColor("#3b2f26") if self.kind in ("House", "Inn", "Shop", "Barn") else QColor("#374151")
             p.fillRect(QRectF(0, 0, w, h), floor_col)
@@ -514,16 +532,13 @@ class BuildingItem(Snappy, QGraphicsItem):
             while y_p < h:
                 p.drawLine(QLineF(0, y_p, w, y_p))
                 y_p += step_p
-<<<<<<< HEAD
         else:
-=======
-        if not self.has_player_inside:
-            p.save()
+            if not self.has_player_inside:
+                p.save()
             if peering_in:
                 roof_clip = QPainterPath()
                 roof_clip.addRect(QRectF(0, 0, w, h))
                 p.setClipPath(roof_clip.subtracted(local_vis))
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
             if w >= h:
                 p.fillRect(QRectF(0, 0, w, h / 2), base.lighter(115))
                 p.fillRect(QRectF(0, h / 2, w, h / 2), base.darker(115))
@@ -536,10 +551,7 @@ class BuildingItem(Snappy, QGraphicsItem):
             ridge_pen.setCosmetic(True)
             p.setPen(ridge_pen)
             p.drawLine(ridge)
-<<<<<<< HEAD
-=======
             p.restore()
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
         p.setBrush(Qt.NoBrush)
         wall = QPen(QColor("#f59e0b") if self.isSelected() and not on_tv else QColor("#2b2b2b"), 3)
         wall.setCosmetic(True)

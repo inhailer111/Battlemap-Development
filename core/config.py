@@ -269,10 +269,7 @@ TOOL_ICONS = {
     "building": '<path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5z" fill="#e5e7eb"/>',
     "fence": '<path d="M5 5v14M12 5v14M19 5v14M3 9h18M3 15h18" stroke="#e5e7eb" stroke-width="2.2" stroke-linecap="round"/>',
     "door": '<rect x="6" y="3" width="12" height="18" rx="1" fill="none" stroke="#f59e0b" stroke-width="2.2"/><circle cx="15" cy="12" r="1.5" fill="#f59e0b"/>',
-<<<<<<< HEAD
-=======
     "doorwall": '<path d="M3 6h6v12H3z" fill="none" stroke="#60a5fa" stroke-width="2"/><rect x="12" y="4" width="9" height="16" rx="1" fill="none" stroke="#f59e0b" stroke-width="2.2"/><circle cx="19" cy="12" r="1.5" fill="#f59e0b"/>',
->>>>>>> 73a3bee (Modularize battlemap domain folders and update project files)
     "prop": '<rect x="3" y="8" width="18" height="8" rx="3" fill="#e5e7eb"/><circle cx="7" cy="17" r="2.2" fill="#93c5fd"/><circle cx="17" cy="17" r="2.2" fill="#93c5fd"/>',
     "token": '<circle cx="12" cy="8" r="4" fill="#e5e7eb"/><path d="M5 20c0-3.8 3.1-6.5 7-6.5s7 2.7 7 6.5" fill="#e5e7eb"/>',
     "reveal": '<path d="M2 12s3.8-6 10-6 10 6 10 6-3.8 6-10 6-10-6-10-6z" fill="none" stroke="#22d3ee" stroke-width="2.2"/><circle cx="12" cy="12" r="3" fill="#22d3ee"/>',
